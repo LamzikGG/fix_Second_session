@@ -1,0 +1,49 @@
+{
+  "name": "chat-messenger",
+  "version": "1.0.0",
+  "description": "WebRTC Chat Messenger with FastAPI backend",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "set NODE_ENV=development && electron .",
+    "build": "electron-builder"
+  },
+  "keywords": [
+    "chat",
+    "webrtc",
+    "messenger",
+    "electron",
+    "fastapi"
+  ],
+  "author": "Chat Messenger Team",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^40.4.1",
+    "electron-builder": "^26.7.0"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  },
+  "build": {
+    "appId": "com.chatmessenger.app",
+    "productName": "ChatMessenger",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "src/assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "src/assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "src/assets/icon.png"
+    }
+  }
+}

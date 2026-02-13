@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Messenger</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <div class="titlebar">
+            <div class="titlebar-drag-region"></div>
+            <div class="titlebar-title">Chat Messenger</div>
+            <div class="titlebar-controls">
+                <button class="titlebar-btn minimize">
+                    <span>─</span>
+                </button>
+                <button class="titlebar-btn maximize">
+                    <span>□</span>
+                </button>
+                <button class="titlebar-btn close">
+                    <span>×</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Экран входа -->
+        <div id="login-screen" class="screen active">
+            <div class="login-container">
+                <div class="logo">
+                    <svg width="80" height="80" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" fill="white"/>
+                    </svg>
+                </div>
+                <h1>Добро пожаловать</h1>
+                <div class="input-group">
+                    <label for="username">Логин</label>
+                    <input type="text" id="username" placeholder="Введите логин" autocomplete="username">
+                </div>
+                <div class="input-group">
+                    <label for="password">Пароль</label>
+                    <input type="password" id="password" placeholder="Введите пароль" autocomplete="current-password">
+                </div>
+                <button id="login-btn" class="btn-primary">
+                    <span>Войти</span>
+                </button>
+                <button id="register-btn" class="btn-secondary">
+                    <span>Регистрация</span>
+                </button>
+                <div id="error-message" class="error-message"></div>
+            </div>
+        </div>
+
+        <!-- Основной интерфейс чата -->
+        <div id="chat-screen" class="screen">
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <div class="user-info">
+                        <div class="avatar">
+                            <span id="current-username-initial" class="initial">U</span>
+                        </div>
+                        <div class="user-details">
+                            <span id="current-username" class="username">User</span>
+                            <span id="user-status" class="status online">Онлайн</span>
+                        </div>
+                    </div>
+                    <button id="new-group-btn" class="btn-icon" title="Новая группа">
+                        <svg width="20" height="20" viewBox="0 0 20 20">
+                            <circle cx="10" cy="10" r="8" fill="none" stroke="white" stroke-width="2"/>
+                            <line x1="10" y1="6" x2="10" y2="14" stroke="white" stroke-width="2"/>
+                            <line x1="6" y1="10" x2="14" y2="10" stroke="white" stroke-width="2"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="search-box">
+                    <input type="text" id="search-users" placeholder="Поиск пользователей...">
+                </div>
+                <div id="users-list" class="users-list"></div>
+            </div>
+
+            <div class="chat-main">
+                <div class="chat-header">
+                    <div class="chat-info">
+                        <div class="avatar small">
+                            <span id="chat-username-initial" class="initial">U</span>
+                        </div>
+                        <div class="chat-details">
+                            <span id="chat-username" class="username">Выберите пользователя</span>
+                            <span id="chat-status" class="status offline">Не в сети</span>
+                        </div>
+                    </div>
+                    <div class="chat-actions">
+                        <button id="audio-call-btn" class="btn-icon" title="Аудио звонок" disabled>
+                            <svg width="20" height="20" viewBox="0 0 20 20">
+                                <path d="M10 2c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2s2-.9 2-2V4c0-1.1-.9-2-2-2z" fill="white"/>
+                                <path d="M5 8H3v2c0 2.8 2.2 5 5 5h4c2.8 0 5-2.2 5-5V8h-2v2c0 1.7-1.3 3-3 3H8c-1.7 0-3-1.3-3-3V8z" fill="white"/>
+                            </svg>
+                        </button>
+                        <button id="video-call-btn" class="btn-icon" title="Видео звонок" disabled>
+                            <svg width="20" height="20" viewBox="0 0 20 20">
+                                <path d="M16 4H4c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z" fill="white"/>
+                                <path d="M16 10l-4-3v6l4-3z" fill="black"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="messages-container" class="messages-container"></div>
+                <div class="message-input">
+                    <textarea id="message-text" placeholder="Введите сообщение..." disabled></textarea>
+                    <button id="send-btn" class="btn-primary" disabled>Отправить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

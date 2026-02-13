@@ -1,0 +1,12 @@
+node_modules/
+frontend/node_modules/
+dist/
+build/
+out/
+*.log
+npm-debug.log*
+.DS_Store
+chat.db
+.env
+.env.local
+.env.*.local
