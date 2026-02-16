@@ -10,6 +10,7 @@ let audioContext = null;
 let analyser = null;
 let users = [];
 let messages = {};
+let authToken = null;
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -151,7 +152,25 @@ function setupEventListeners() {
     // Кнопка новой группы
     const newGroupBtn = document.getElementById('new-group-btn');
     if (newGroupBtn) {
-        newGroupBtn.onclick = createNewGroup;
+        newGroupBtn.onclick = showGroupModal;
+    }
+
+    // Модалка группы
+    const modalClose = document.getElementById('modal-close');
+    const modalCancel = document.getElementById('modal-cancel');
+    const modalCreate = document.getElementById('modal-create');
+    const groupNameInput = document.getElementById('group-name');
+
+    if (modalClose) modalClose.onclick = hideGroupModal;
+    if (modalCancel) modalCancel.onclick = hideGroupModal;
+    if (modalCreate) modalCreate.onclick = createNewGroup;
+    if (groupNameInput) {
+        groupNameInput.onkeypress = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                createNewGroup();
+            }
+        };
     }
     
     // Поиск пользователей
@@ -165,6 +184,8 @@ function setupEventListeners() {
         window.electronAPI.onWebSocketConnected(() => {
             console.log('WebSocket connected');
             loadChatInterface();
+            fetchUsers();
+            fetchGroups();
         });
         
         window.electronAPI.onWebSocketMessage(handleWebSocketMessage);
@@ -201,22 +222,20 @@ async function handleLogin() {
             body: formData
         });
         
-        const responseText = await response.text();
-        
+        const json = await response.json();
         if (!response.ok) {
-            throw new Error(`Ошибка ${response.status}: ${responseText}`);
+            throw new Error(`Ошибка ${response.status}: ${JSON.stringify(json)}`);
         }
-        
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch (e) {
-            data = { message: responseText };
+
+        const data = json.data || {};
+        const accessToken = data.access_token;
+        const userId = data.user_id;
+
+        if (!accessToken || !userId) {
+            throw new Error('Отсутствуют данные авторизации');
         }
-        
-        // Извлекаем данные из ответа
-        const accessToken = data.access_token || data.token;
-        const userId = data.user_id || (data.data && data.data.user_id) || 1;
+
+        authToken = accessToken;
         
         currentUser = { 
             id: userId, 
@@ -307,41 +326,50 @@ function loadChatInterface() {
 
 function handleWebSocketMessage(message) {
     console.log('WebSocket message:', message);
-    
+
     switch (message.type) {
-        case 'message':
-            if (message.sender_id === currentChatUser?.id) {
-                addMessageToChat(message, 'received');
+        case 'message': {
+            const mapped = {
+                ...message,
+                timestamp: message.created_at || message.timestamp || new Date().toISOString()
+            };
+            const peerId = mapped.sender_id === currentUser?.id ? mapped.receiver_id : mapped.sender_id;
+            if (!messages[peerId]) messages[peerId] = [];
+            messages[peerId].push(mapped);
+
+            if (mapped.sender_id === currentChatUser?.id) {
+                addMessageToChat(mapped, 'received');
             } else {
-                // Уведомление о новом сообщении
-                const sender = users.find(u => u.id === message.sender_id);
+                const sender = users.find(u => u.id === mapped.sender_id);
                 if (sender && window.electronAPI) {
-                    window.electronAPI.showNotification('Новое сообщение', 
-                        `${sender.username}: ${message.content.substring(0, 50)}`);
+                    window.electronAPI.showNotification('Новое сообщение',
+                        `${sender.username}: ${mapped.content.substring(0, 50)}`);
                 }
             }
             break;
-            
-        case 'users_list':
-            updateUsersList(message.users);
-            break;
-            
+        }
         case 'typing':
             if (message.sender_id === currentChatUser?.id) {
                 showTypingIndicator(message.is_typing);
             }
             break;
-            
-        case 'call_request':
+        case 'incoming_call':
             handleIncomingCall(message);
             break;
-            
-        case 'call_ended':
+        case 'call_accepted':
+            showError('Вызов принят');
+            break;
+        case 'call_declined':
+            showError('Вызов отклонен');
             handleCallEnded();
             break;
-            
         case 'ice_candidate':
             handleIceCandidate(message);
+            break;
+        case 'group_invite':
+            if (window.electronAPI) {
+                window.electronAPI.showNotification('Приглашение в группу', `${message.inviter} пригласил вас в ${message.group_name}`);
+            }
             break;
     }
 }
@@ -444,13 +472,20 @@ function selectUser(user) {
     loadMessageHistory(user.id);
 }
 
-function loadMessageHistory(userId) {
+async function loadMessageHistory(userId) {
     const container = document.getElementById('messages-container');
     if (!container) return;
-    
     container.innerHTML = '';
-    
-    // Загружаем сохраненные сообщения
+
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/messages/${userId}`);
+        const json = await resp.json();
+        const list = json.data || [];
+        messages[userId] = list.map(m => ({ ...m, timestamp: m.created_at }));
+    } catch (e) {
+        console.warn('Не удалось загрузить историю сообщений из API, используем локальную');
+    }
+
     const history = messages[userId] || [];
     history.forEach(msg => {
         addMessageToChat(msg, msg.sender_id === currentUser?.id ? 'sent' : 'received');
@@ -529,15 +564,50 @@ function showTypingIndicator(isTyping) {
     }
 }
 
-function createNewGroup() {
-    const groupName = prompt('Введите название группы:');
-    if (!groupName) return;
-    
-    if (window.electronAPI) {
-        window.electronAPI.sendWebSocketMessage({
-            type: 'create_group',
-            name: groupName
+function showGroupModal() {
+    const modal = document.getElementById('group-modal');
+    const input = document.getElementById('group-name');
+    if (modal && input) {
+        input.value = '';
+        modal.classList.add('active');
+        input.focus();
+    }
+}
+
+function hideGroupModal() {
+    const modal = document.getElementById('group-modal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+async function createNewGroup() {
+    const input = document.getElementById('group-name');
+    const groupName = input?.value.trim();
+    if (!groupName) {
+        showError('Введите название группы');
+        return;
+    }
+
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/groups/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: groupName })
         });
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`Ошибка ${resp.status}: ${txt}`);
+        }
+        hideGroupModal();
+        fetchGroups(); // Обновляем список групп
+        if (window.electronAPI) {
+            window.electronAPI.showNotification('Группа создана', groupName);
+        }
+        showError('Группа создана');
+    } catch (e) {
+        console.error('Create group error:', e);
+        showError(e.message);
     }
 }
 
@@ -553,35 +623,24 @@ function initiateCall(type) {
         return;
     }
     
-    callId = 'call_' + Date.now();
     isCaller = true;
     
-    // Отправляем приглашение
     if (window.electronAPI) {
         window.electronAPI.sendWebSocketMessage({
-            type: 'call_request',
-            call_id: callId,
-            target_user_id: currentChatUser.id,
-            call_type: type,
-            initiator_name: currentUser.username
+            type: 'call_initiate',
+            receiver_id: currentChatUser.id,
+            call_type: type
         });
         
         window.electronAPI.showNotification('Вызов', `Звонок ${currentChatUser.username}`);
-    }
-    
-    // Открываем окно звонка
-    if (window.electronAPI) {
         window.electronAPI.openCallWindow({
-            call_id: callId,
+            call_id: null,
             call_type: type,
             initiator_id: currentUser.id,
             target_id: currentChatUser.id,
             initiator_name: currentUser.username
         });
     }
-    
-    // Запускаем WebRTC
-    startWebRTCConnection();
 }
 
 function handleIncomingCall(data) {
@@ -626,9 +685,12 @@ async function startWebRTCConnection(remoteSdp = null) {
         const constraints = {
             video: false, // Для теста отключаем видео
             audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
+                echoCancellation: { ideal: true },
+                noiseSuppression: { ideal: true },
+                autoGainControl: { ideal: true },
+                sampleRate: { ideal: 48000 },
+                sampleSize: { ideal: 16 },
+                channelCount: { ideal: 2 }
             }
         };
         

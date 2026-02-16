@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, screen, Notification } = require('electron');
 const path = require('path');
+const WebSocket = require('ws');
 
 let mainWindow;
 let callWindow;
@@ -77,37 +78,54 @@ function setupIpcHandlers() {
     
     ipcMain.on('connect-websocket', (event, userId) => {
         console.log('Connecting WebSocket for user:', userId);
-        
-        // Имитация подключения (замените на реальный WebSocket)
-        setTimeout(() => {
-            event.reply('websocket-connected');
-            
-            // Отправляем список пользователей
-            event.reply('websocket-message', {
-                type: 'users_list',
-                users: [
-                    { id: 2, username: 'Анна', status: 'online' },
-                    { id: 3, username: 'Иван', status: 'offline' },
-                    { id: 4, username: 'Мария', status: 'online' },
-                    { id: 5, username: 'Петр', status: 'online' }
-                ]
+        try {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                ws = null;
+            }
+            const url = `ws://localhost:8000/ws/${userId}`;
+            ws = new WebSocket(url);
+
+            ws.on('open', () => {
+                console.log('WebSocket connected:', url);
+                event.reply('websocket-connected');
             });
-        }, 1000);
+
+            ws.on('message', (data) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+                    event.reply('websocket-message', msg);
+                } catch (e) {
+                    console.error('WS message parse error:', e);
+                }
+            });
+
+            ws.on('close', () => {
+                console.log('WebSocket closed');
+                event.reply('websocket-disconnected');
+            });
+
+            ws.on('error', (err) => {
+                console.error('WebSocket error:', err);
+                event.reply('websocket-disconnected');
+            });
+        } catch (e) {
+            console.error('WebSocket init error:', e);
+            event.reply('websocket-disconnected');
+        }
     });
 
     ipcMain.on('websocket-message', (event, message) => {
         console.log('Sending WebSocket message:', message);
-        
-        // Имитация ответа на сообщение
-        if (message.type === 'message') {
-            setTimeout(() => {
-                event.reply('websocket-message', {
-                    type: 'message',
-                    sender_id: message.receiver_id,
-                    content: 'Это автоматический ответ',
-                    timestamp: new Date().toISOString()
-                });
-            }, 500);
+        try {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message));
+            } else {
+                console.warn('WebSocket not connected');
+                event.reply('websocket-disconnected');
+            }
+        } catch (e) {
+            console.error('WebSocket send error:', e);
         }
     });
 
@@ -133,8 +151,8 @@ function setupIpcHandlers() {
             frame: false,
             webPreferences: {
                 preload: path.join(__dirname, '..', 'preload.js'),
-                nodeIntegration: false,
-                contextIsolation: true
+                nodeIntegration: true,
+                contextIsolation: false
             }
         });
         
