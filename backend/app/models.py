@@ -17,7 +17,8 @@ class User(Base):
     messages = relationship("Message", back_populates="sender", foreign_keys="Message.sender_id")
     received_messages = relationship("Message", back_populates="receiver", foreign_keys="Message.receiver_id")
     groups = relationship("GroupMember", back_populates="user")
-    calls = relationship("Call", back_populates="initiator")
+    calls_initiated = relationship("Call", foreign_keys="Call.initiator_id", back_populates="initiator")
+    calls_received = relationship("Call", foreign_keys="Call.receiver_id", back_populates="receiver")
     
     def verify_password(self, password: str) -> bool:
         """Проверка пароля"""
@@ -40,8 +41,8 @@ class Message(Base):
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
     
     # Отношения
-    sender = relationship("User", foreign_keys=[sender_id])
-    receiver = relationship("User", foreign_keys=[receiver_id])
+    sender = relationship("User", foreign_keys=[sender_id], back_populates="messages")
+    receiver = relationship("User", foreign_keys=[receiver_id], back_populates="received_messages")
     group = relationship("Group", back_populates="messages")
 
 class Group(Base):
@@ -82,8 +83,8 @@ class Call(Base):
     ended_at = Column(DateTime, nullable=True)
     
     # Отношения
-    initiator = relationship("User", foreign_keys=[initiator_id])
-    receiver = relationship("User", foreign_keys=[receiver_id])
+    initiator = relationship("User", foreign_keys=[initiator_id], back_populates="calls_initiated")
+    receiver = relationship("User", foreign_keys=[receiver_id], back_populates="calls_received")
 
 class OfflineMessage(Base):
     __tablename__ = "offline_messages"

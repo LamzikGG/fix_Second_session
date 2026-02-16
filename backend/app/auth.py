@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from .database import SessionLocal, get_db
+from .database import get_db
 from .models import User
 from .schemas import TokenData
 import os
@@ -16,18 +16,19 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 # OAuth2 схема для получения токена
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-def create_access_token( dict) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """
     Создание JWT токена
     
     Args:
         data: Данные для кодирования в токене
+        expires_delta: Переопределить время жизни токена (по умолчанию ACCESS_TOKEN_EXPIRE_MINUTES)
         
     Returns:
         JWT токен
     """
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -94,3 +95,4 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+

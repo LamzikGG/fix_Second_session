@@ -68,3 +68,4 @@ async def deliver_offline_messages(user_id: int, websocket, db: Session):
         # Mark as delivered
         msg.delivered = True
         db.commit()
+
