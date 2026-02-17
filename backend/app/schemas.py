@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 # User schemas
 class UserBase(BaseModel):
@@ -12,6 +12,20 @@ class UserCreate(UserBase):
 class User(UserBase):
     id: int
     is_active: bool
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# Friend schemas
+class FriendRequest(BaseModel):
+    friend_id: int
+
+class FriendshipResponse(BaseModel):
+    id: int
+    user_id: int
+    friend_id: int
+    status: str
     created_at: datetime
     
     class Config:
@@ -41,12 +55,27 @@ class GroupBase(BaseModel):
     name: str
 
 class GroupCreate(GroupBase):
-    pass
+    members: Optional[List[str]] = []  # List of usernames to add
 
 class Group(GroupBase):
     id: int
     creator_id: int
     created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class GroupMemberAdd(BaseModel):
+    user_login: Optional[str] = None
+    user_id: Optional[int] = None
+
+class GroupMemberResponse(BaseModel):
+    id: int
+    username: str
+    is_admin: bool
+    is_online: bool
+    status: str
+    joined_at: datetime
     
     class Config:
         from_attributes = True

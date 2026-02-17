@@ -8,10 +8,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         console.log('IPC: minimize-window');
         ipcRenderer.send('minimize-window');
     },
+    
     maximizeWindow: () => {
         console.log('IPC: maximize-window');
         ipcRenderer.send('maximize-window');
     },
+    
     closeWindow: () => {
         console.log('IPC: close-window');
         ipcRenderer.send('close-window');
@@ -27,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
             return false;
         }
     },
+    
     getFromStorage: (key) => {
         try {
             return localStorage.getItem(key);
@@ -41,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         console.log('IPC: connect-websocket', userId);
         ipcRenderer.send('connect-websocket', userId);
     },
+    
     sendWebSocketMessage: (message) => {
         console.log('IPC: websocket-message', message);
         ipcRenderer.send('websocket-message', message);
@@ -53,12 +57,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
             callback();
         });
     },
+    
     onWebSocketMessage: (callback) => {
         ipcRenderer.on('websocket-message', (event, message) => {
             console.log('Event: websocket-message', message);
             callback(message);
         });
     },
+    
     onWebSocketDisconnected: (callback) => {
         ipcRenderer.on('websocket-disconnected', () => {
             console.log('Event: websocket-disconnected');
@@ -75,6 +81,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openCallWindow: (callData) => {
         ipcRenderer.send('open-call-window', callData);
     },
+    
     onCallResponse: (callback) => {
         ipcRenderer.on('call-response', (event, response) => {
             console.log('Event: call-response', response);

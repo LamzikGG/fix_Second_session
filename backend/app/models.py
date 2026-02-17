@@ -19,6 +19,8 @@ class User(Base):
     groups = relationship("GroupMember", back_populates="user")
     calls_initiated = relationship("Call", foreign_keys="Call.initiator_id", back_populates="initiator")
     calls_received = relationship("Call", foreign_keys="Call.receiver_id", back_populates="receiver")
+    friendships_initiated = relationship("Friendship", foreign_keys="Friendship.user_id", back_populates="user")
+    friendships_received = relationship("Friendship", foreign_keys="Friendship.friend_id", back_populates="friend")
     
     def verify_password(self, password: str) -> bool:
         """Проверка пароля"""
@@ -27,6 +29,19 @@ class User(Base):
     def set_password(self, password: str):
         """Установка хешированного пароля"""
         self.hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+class Friendship(Base):
+    __tablename__ = "friendships"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    friend_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String(20), default='pending')  # 'pending', 'accepted', 'blocked'
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Отношения
+    user = relationship("User", foreign_keys=[user_id], back_populates="friendships_initiated")
+    friend = relationship("User", foreign_keys=[friend_id], back_populates="friendships_received")
 
 class Message(Base):
     __tablename__ = "messages"

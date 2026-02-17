@@ -1,6 +1,7 @@
 // ==================== СОСТОЯНИЕ ====================
 let currentUser = null;
 let currentChatUser = null;
+let currentGroupId = null;
 let peerConnection = null;
 let localStream = null;
 let remoteStream = null;
@@ -9,9 +10,10 @@ let isCaller = false;
 let audioContext = null;
 let analyser = null;
 let users = [];
+let friends = [];
+let groups = [];
 let messages = {};
 let authToken = null;
-
 const API_BASE_URL = 'http://localhost:8000';
 
 // ==================== ИНИЦИАЛИЗАЦИЯ ====================
@@ -149,21 +151,22 @@ function setupEventListeners() {
         audioCallBtn.onclick = () => initiateCall('audio');
     }
     
-    // Кнопка новой группы
-    const newGroupBtn = document.getElementById('new-group-btn');
-    if (newGroupBtn) {
-        newGroupBtn.onclick = showGroupModal;
+    // Кнопка новой группы (в groups-section)
+    const createGroupBtn = document.getElementById('create-group-btn');
+    if (createGroupBtn) {
+        createGroupBtn.onclick = showGroupModal;
     }
-
+    
     // Модалка группы
     const modalClose = document.getElementById('modal-close');
     const modalCancel = document.getElementById('modal-cancel');
     const modalCreate = document.getElementById('modal-create');
     const groupNameInput = document.getElementById('group-name');
-
+    
     if (modalClose) modalClose.onclick = hideGroupModal;
     if (modalCancel) modalCancel.onclick = hideGroupModal;
     if (modalCreate) modalCreate.onclick = createNewGroup;
+    
     if (groupNameInput) {
         groupNameInput.onkeypress = (e) => {
             if (e.key === 'Enter') {
@@ -176,7 +179,92 @@ function setupEventListeners() {
     // Поиск пользователей
     const searchInput = document.getElementById('search-users');
     if (searchInput) {
-        searchInput.oninput = filterUsers;
+        let searchTimeout;
+        searchInput.oninput = () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                searchUsers(searchInput.value);
+            }, 500);
+        };
+    }
+    
+    // Управление группой модалка
+    const manageModalClose = document.getElementById('manage-modal-close');
+    const leaveGroupBtn = document.getElementById('leave-group-btn');
+    const addMemberBtn = document.getElementById('add-member-btn');
+    
+    if (manageModalClose) {
+        manageModalClose.onclick = () => {
+            document.getElementById('group-manage-modal').classList.remove('active');
+        };
+    }
+    
+    if (leaveGroupBtn) {
+        leaveGroupBtn.onclick = async () => {
+            if (!currentGroupId) return;
+            if (!confirm('Выйти из группы?')) return;
+            
+            try {
+                const resp = await authorizedFetch(
+                    `${API_BASE_URL}/groups/${currentGroupId}/leave`,
+                    { method: 'POST' }
+                );
+                
+                if (resp.ok) {
+                    document.getElementById('group-manage-modal').classList.remove('active');
+                    await fetchGroups();
+                    currentGroupId = null;
+                    currentChatUser = null;
+                    showError('Вы вышли из группы');
+                    
+                    document.getElementById('messages-container').innerHTML = `
+                        <div class="empty-chat">
+                            <p>Выберите чат для начала общения</p>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                showError('Ошибка при выходе из группы');
+            }
+        };
+    }
+    
+    if (addMemberBtn) {
+        addMemberBtn.onclick = async () => {
+            const input = document.getElementById('new-member-login');
+            const login = input?.value.trim();
+            if (!login || !currentGroupId) return;
+            
+            try {
+                const resp = await authorizedFetch(
+                    `${API_BASE_URL}/groups/${currentGroupId}/members`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: login })
+                    }
+                );
+                
+                if (resp.ok) {
+                    input.value = '';
+                    await showGroupManageModal(currentGroupId);
+                    await fetchGroups();
+                    showError('Участник добавлен');
+                }
+            } catch (e) {
+                showError('Ошибка при добавлении участника');
+            }
+        };
+    }
+    
+    // Кнопка управления группой
+    const groupManageBtn = document.getElementById('group-manage-btn');
+    if (groupManageBtn) {
+        groupManageBtn.onclick = () => {
+            if (currentGroupId) {
+                showGroupManageModal(currentGroupId);
+            }
+        };
     }
     
     // WebSocket события
@@ -184,7 +272,7 @@ function setupEventListeners() {
         window.electronAPI.onWebSocketConnected(() => {
             console.log('WebSocket connected');
             loadChatInterface();
-            fetchUsers();
+            fetchFriends();
             fetchGroups();
         });
         
@@ -223,22 +311,22 @@ async function handleLogin() {
         });
         
         const json = await response.json();
+        
         if (!response.ok) {
             throw new Error(`Ошибка ${response.status}: ${JSON.stringify(json)}`);
         }
-
+        
         const data = json.data || {};
         const accessToken = data.access_token;
         const userId = data.user_id;
-
+        
         if (!accessToken || !userId) {
             throw new Error('Отсутствуют данные авторизации');
         }
-
-        authToken = accessToken;
         
-        currentUser = { 
-            id: userId, 
+        authToken = accessToken;
+        currentUser = {
+            id: userId,
             username: username,
             initial: username.charAt(0).toUpperCase()
         };
@@ -264,7 +352,6 @@ async function handleLogin() {
         document.getElementById('chat-screen').classList.add('active');
         
         showError('Вход выполнен успешно!');
-        
     } catch (error) {
         console.error('Login error:', error);
         showError(error.message);
@@ -297,7 +384,6 @@ async function handleRegister() {
         
         showError('Регистрация успешна! Теперь можно войти.');
         document.getElementById('password').value = '';
-        
     } catch (error) {
         console.error('Register error:', error);
         showError(error.message);
@@ -306,10 +392,419 @@ async function handleRegister() {
 
 function loadSavedCredentials() {
     if (!window.electronAPI) return;
-    
     const savedUsername = window.electronAPI.getFromStorage('username');
     if (savedUsername) {
         document.getElementById('username').value = savedUsername;
+    }
+}
+
+// ==================== ПОИСК И ДОБАВЛЕНИЕ ДРУЗЕЙ ====================
+async function searchUsers(query) {
+    // Удаляем старые результаты
+    const existingResults = document.querySelector('.search-results');
+    if (existingResults) {
+        existingResults.remove();
+    }
+    
+    if (!query || query.length < 2) {
+        return;
+    }
+    
+    // Показываем индикатор загрузки
+    const searchBox = document.querySelector('.search-box');
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'search-results loading';
+    loadingDiv.innerHTML = '<div class="loading-text">Поиск...</div>';
+    searchBox.appendChild(loadingDiv);
+    
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/users/search?q=${encodeURIComponent(query)}`);
+        loadingDiv.remove();
+        
+        if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+        }
+        
+        const json = await resp.json();
+        const searchResults = json.data || [];
+        
+        if (searchResults.length === 0) {
+            const noResults = document.createElement('div');
+            noResults.className = 'search-results';
+            noResults.innerHTML = '<div class="no-results">Пользователи не найдены</div>';
+            searchBox.appendChild(noResults);
+            return;
+        }
+        
+        displaySearchResults(searchResults);
+    } catch (e) {
+        loadingDiv.remove();
+        console.error('Search error:', e);
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'search-results';
+        errorDiv.innerHTML = '<div class="error-text">Ошибка поиска</div>';
+        searchBox.appendChild(errorDiv);
+    }
+}
+
+function displaySearchResults(searchResults) {
+    const searchBox = document.querySelector('.search-box');
+    if (!searchBox) return;
+    
+    const resultsDiv = document.createElement('div');
+    resultsDiv.className = 'search-results';
+    
+    searchResults.forEach(user => {
+        if (user.id === currentUser?.id) return;
+        
+        const userEl = document.createElement('div');
+        userEl.className = 'search-result-item';
+        userEl.innerHTML = `
+            <div class="avatar small">
+                <span class="initial">${user.username.charAt(0).toUpperCase()}</span>
+            </div>
+            <div class="user-details">
+                <span class="username">${escapeHtml(user.username)}</span>
+                <span class="status ${user.status || 'offline'}">
+                    ${user.status === 'online' ? 'Онлайн' : 'Не в сети'}
+                </span>
+            </div>
+            <button class="btn-add-friend" data-user-id="${user.id}">
+                <svg width="16" height="16" viewBox="0 0 20 20">
+                    <line x1="10" y1="4" x2="10" y2="16" stroke="white" stroke-width="2"/>
+                    <line x1="4" y1="10" x2="16" y2="10" stroke="white" stroke-width="2"/>
+                </svg>
+            </button>
+        `;
+        resultsDiv.appendChild(userEl);
+    });
+    
+    searchBox.appendChild(resultsDiv);
+    
+    // Обработчики кнопок добавления
+    document.querySelectorAll('.btn-add-friend').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            const userId = btn.dataset.userId;
+            addFriend(userId);
+        };
+    });
+    
+    // Закрытие при клике вне
+    document.addEventListener('click', function closeSearch(e) {
+        if (!searchBox.contains(e.target)) {
+            resultsDiv.remove();
+            document.removeEventListener('click', closeSearch);
+        }
+    });
+}
+
+async function addFriend(friendId) {
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/friends/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ friend_id: parseInt(friendId) })
+        });
+        
+        if (resp.ok) {
+            showError('Запрос на добавление в друзья отправлен');
+            
+            // Уведомляем через WebSocket
+            if (window.electronAPI) {
+                window.electronAPI.sendWebSocketMessage({
+                    type: 'friend_request',
+                    target_user_id: parseInt(friendId)
+                });
+            }
+            
+            // Скрываем результаты поиска
+            const results = document.querySelector('.search-results');
+            if (results) results.remove();
+            
+            // Обновляем список друзей
+            await fetchFriends();
+        } else {
+            const error = await resp.json();
+            showError(error.detail || 'Ошибка при добавлении друга');
+        }
+    } catch (e) {
+        console.error('Add friend error:', e);
+        showError('Ошибка при добавлении друга');
+    }
+}
+
+async function fetchFriends() {
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/friends`);
+        const json = await resp.json();
+        friends = json.data || [];
+        
+        // Преобразуем друзей в пользователей для отображения
+        const usersList = friends.map(friend => ({
+            id: friend.id,
+            username: friend.username,
+            status: friend.status || 'offline',
+            last_seen: friend.last_seen
+        }));
+        
+        updateUsersList(usersList);
+    } catch (e) {
+        console.error('Fetch friends error:', e);
+        // Показываем пустое состояние
+        const usersListEl = document.getElementById('users-list');
+        if (usersListEl) {
+            usersListEl.innerHTML = `
+                <div class="empty-chat" style="padding: 20px;">
+                    <p>Нет друзей</p>
+                    <small>Используйте поиск для добавления</small>
+                </div>
+            `;
+        }
+    }
+}
+
+// ==================== ГРУППЫ ====================
+async function fetchGroups() {
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/groups`);
+        const json = await resp.json();
+        groups = json.data || [];
+        updateGroupsList(groups);
+    } catch (e) {
+        console.error('Fetch groups error:', e);
+    }
+}
+
+function updateGroupsList(groupsList) {
+    const groupsListEl = document.getElementById('groups-list');
+    if (!groupsListEl) return;
+    
+    groupsListEl.innerHTML = '';
+    
+    groupsList.forEach(group => {
+        const groupEl = document.createElement('div');
+        groupEl.className = 'group-item';
+        groupEl.dataset.groupId = group.id;
+        groupEl.innerHTML = `
+            <div class="avatar">
+                <span class="initial">${group.name.charAt(0).toUpperCase()}</span>
+            </div>
+            <div class="user-details">
+                <span class="username">${escapeHtml(group.name)}</span>
+                <span class="status">${group.members_count} участников</span>
+            </div>
+        `;
+        groupEl.onclick = () => selectGroup(group);
+        groupsListEl.appendChild(groupEl);
+    });
+}
+
+async function createNewGroup() {
+    const input = document.getElementById('group-name');
+    const groupName = input?.value.trim();
+    
+    if (!groupName) {
+        showError('Введите название группы');
+        return;
+    }
+    
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/groups/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: groupName })
+        });
+        
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`Ошибка ${resp.status}: ${txt}`);
+        }
+        
+        hideGroupModal();
+        await fetchGroups();
+        
+        if (window.electronAPI) {
+            window.electronAPI.showNotification('Группа создана', groupName);
+        }
+        
+        showError('Группа создана');
+    } catch (e) {
+        console.error('Create group error:', e);
+        showError(e.message);
+    }
+}
+
+function showGroupModal() {
+    const modal = document.getElementById('group-modal');
+    const input = document.getElementById('group-name');
+    
+    if (modal && input) {
+        input.value = '';
+        modal.classList.add('active');
+        input.focus();
+    }
+}
+
+function hideGroupModal() {
+    const modal = document.getElementById('group-modal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+async function selectGroup(group) {
+    currentGroupId = group.id;
+    currentChatUser = {
+        id: group.id,
+        username: group.name,
+        is_group: true,
+        status: 'online',
+        members_count: group.members_count
+    };
+    
+    // Обновляем UI заголовка
+    document.getElementById('chat-username').textContent = group.name;
+    document.getElementById('chat-username-initial').textContent = group.name.charAt(0).toUpperCase();
+    document.getElementById('chat-status').textContent = `${group.members_count} участников`;
+    document.getElementById('chat-status').className = 'status online';
+    
+    // Показываем кнопку управления группой
+    const groupManageBtn = document.getElementById('group-manage-btn');
+    if (groupManageBtn) {
+        groupManageBtn.style.display = 'flex';
+        groupManageBtn.onclick = () => showGroupManageModal(group.id);
+    }
+    
+    // Блокируем звонки для групп
+    document.getElementById('audio-call-btn').disabled = true;
+    document.getElementById('video-call-btn').disabled = true;
+    
+    // Активируем ввод сообщений
+    document.getElementById('message-text').disabled = false;
+    document.getElementById('send-btn').disabled = false;
+    
+    // Подсветка активной группы
+    document.querySelectorAll('.group-item').forEach(el => {
+        el.classList.toggle('active', parseInt(el.dataset.groupId) === group.id);
+    });
+    document.querySelectorAll('.user-item').forEach(el => {
+        el.classList.remove('active');
+    });
+    
+    // Загружаем историю сообщений
+    await loadMessageHistory(group.id, true);
+}
+
+async function showGroupManageModal(groupId) {
+    const modal = document.getElementById('group-manage-modal');
+    const membersList = document.getElementById('group-members-list');
+    const addMemberSection = document.getElementById('add-member-section');
+    const deleteBtn = document.getElementById('delete-group-btn');
+    
+    if (!modal || !membersList) return;
+    
+    // Загружаем информацию о группе
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/groups/${groupId}`);
+        const json = await resp.json();
+        const group = json.data;
+        
+        membersList.innerHTML = '';
+        
+        if (group.members && Array.isArray(group.members)) {
+            group.members.forEach(member => {
+                const memberEl = document.createElement('div');
+                memberEl.className = 'group-member-item';
+                const isYou = member.id === currentUser.id;
+                const isAdmin = member.is_admin;
+                
+                memberEl.innerHTML = `
+                    <div class="avatar small">
+                        <span class="initial">${member.username.charAt(0).toUpperCase()}</span>
+                    </div>
+                    <div class="member-info">
+                        <span class="username">
+                            ${escapeHtml(member.username)}
+                            ${isYou ? '<span class="you-badge">Вы</span>' : ''}
+                            ${isAdmin ? '<span class="admin-badge">Админ</span>' : ''}
+                        </span>
+                    </div>
+                    ${!isYou && group.is_owner ? `
+                        <button class="btn-remove-member" data-member-id="${member.id}">
+                            ×
+                        </button>
+                    ` : ''}
+                `;
+                membersList.appendChild(memberEl);
+            });
+        }
+        
+        // Показываем секцию добавления только для владельца/админа
+        if (addMemberSection) {
+            addMemberSection.style.display = group.is_owner ? 'block' : 'none';
+        }
+        
+        // Кнопка удаления только для владельца
+        if (deleteBtn) {
+            deleteBtn.style.display = group.is_owner ? 'block' : 'none';
+            deleteBtn.onclick = () => deleteGroup(groupId);
+        }
+        
+        // Обработчики удаления участников
+        document.querySelectorAll('.btn-remove-member').forEach(btn => {
+            btn.onclick = () => removeGroupMember(groupId, btn.dataset.memberId);
+        });
+        
+        modal.classList.add('active');
+    } catch (e) {
+        console.error('Load group error:', e);
+        showError('Не удалось загрузить информацию о группе');
+    }
+}
+
+async function deleteGroup(groupId) {
+    if (!confirm('Вы уверены, что хотите удалить группу?')) return;
+    
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/groups/${groupId}`, {
+            method: 'DELETE'
+        });
+        
+        if (resp.ok) {
+            document.getElementById('group-manage-modal').classList.remove('active');
+            await fetchGroups();
+            showError('Группа удалена');
+            
+            // Очищаем текущий чат
+            currentGroupId = null;
+            currentChatUser = null;
+            document.getElementById('messages-container').innerHTML = `
+                <div class="empty-chat">
+                    <p>Выберите чат для начала общения</p>
+                </div>
+            `;
+        }
+    } catch (e) {
+        showError('Ошибка при удалении группы');
+    }
+}
+
+async function removeGroupMember(groupId, memberId) {
+    if (!confirm('Удалить участника из группы?')) return;
+    
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/groups/${groupId}/members/${memberId}`, {
+            method: 'DELETE'
+        });
+        
+        if (resp.ok) {
+            await showGroupManageModal(groupId);
+            await fetchGroups();
+            showError('Участник удалён');
+        }
+    } catch (e) {
+        showError('Ошибка при удалении участника');
     }
 }
 
@@ -319,57 +814,87 @@ function loadChatInterface() {
     if (window.electronAPI) {
         window.electronAPI.showNotification('Подключено', 'Вы в сети');
     }
-    
     document.getElementById('message-text').disabled = false;
     document.getElementById('send-btn').disabled = false;
 }
 
 function handleWebSocketMessage(message) {
     console.log('WebSocket message:', message);
-
+    
     switch (message.type) {
         case 'message': {
             const mapped = {
                 ...message,
                 timestamp: message.created_at || message.timestamp || new Date().toISOString()
             };
-            const peerId = mapped.sender_id === currentUser?.id ? mapped.receiver_id : mapped.sender_id;
+            
+            const peerId = mapped.sender_id === currentUser?.id 
+                ? mapped.receiver_id 
+                : mapped.sender_id;
+            
             if (!messages[peerId]) messages[peerId] = [];
             messages[peerId].push(mapped);
-
-            if (mapped.sender_id === currentChatUser?.id) {
+            
+            if (mapped.sender_id === currentChatUser?.id || mapped.group_id === currentGroupId) {
                 addMessageToChat(mapped, 'received');
             } else {
                 const sender = users.find(u => u.id === mapped.sender_id);
                 if (sender && window.electronAPI) {
-                    window.electronAPI.showNotification('Новое сообщение',
-                        `${sender.username}: ${mapped.content.substring(0, 50)}`);
+                    window.electronAPI.showNotification(
+                        'Новое сообщение',
+                        `${sender.username}: ${mapped.content.substring(0, 50)}`
+                    );
                 }
             }
             break;
         }
+        
         case 'typing':
             if (message.sender_id === currentChatUser?.id) {
                 showTypingIndicator(message.is_typing);
             }
             break;
+            
         case 'incoming_call':
             handleIncomingCall(message);
             break;
+            
         case 'call_accepted':
             showError('Вызов принят');
             break;
+            
         case 'call_declined':
             showError('Вызов отклонен');
             handleCallEnded();
             break;
+            
         case 'ice_candidate':
             handleIceCandidate(message);
             break;
+            
         case 'group_invite':
             if (window.electronAPI) {
-                window.electronAPI.showNotification('Приглашение в группу', `${message.inviter} пригласил вас в ${message.group_name}`);
+                window.electronAPI.showNotification(
+                    'Приглашение в группу',
+                    `${message.inviter} пригласил вас в ${message.group_name}`
+                );
             }
+            fetchGroups();
+            break;
+            
+        case 'friend_request':
+            if (window.electronAPI) {
+                window.electronAPI.showNotification(
+                    'Запрос в друзья',
+                    `${message.from_username} хочет добавить вас в друзья`
+                );
+            }
+            showError(`Новый запрос в друзья от ${message.from_username}`);
+            break;
+            
+        case 'friend_accepted':
+            showError(`${message.friend_username} принял ваш запрос!`);
+            fetchFriends();
             break;
     }
 }
@@ -377,119 +902,123 @@ function handleWebSocketMessage(message) {
 function updateUsersList(usersList) {
     users = usersList;
     const usersListEl = document.getElementById('users-list');
+    
     if (!usersListEl) return;
     
     usersListEl.innerHTML = '';
     
-    users.forEach(user => {
-        if (user.id === currentUser?.id) return; // Не показываем себя
-        
-        const userEl = document.createElement('div');
-        userEl.className = `user-item ${user.status}`;
-        userEl.dataset.userId = user.id;
-        
-        userEl.innerHTML = `
-            <div class="avatar">
-                <span class="initial">${user.username.charAt(0).toUpperCase()}</span>
-            </div>
-            <div class="user-details">
-                <span class="username">${user.username}</span>
-                <span class="status ${user.status}">${user.status === 'online' ? 'Онлайн' : 'Не в сети'}</span>
-            </div>
-        `;
-        
-        userEl.onclick = () => selectUser(user);
-        usersListEl.appendChild(userEl);
-    });
-}
-
-function filterUsers() {
-    const searchTerm = document.getElementById('search-users')?.value.toLowerCase();
-    if (!searchTerm) {
-        updateUsersList(users);
-        return;
-    }
-    
-    const filtered = users.filter(user => 
-        user.username.toLowerCase().includes(searchTerm)
-    );
-    
-    const usersListEl = document.getElementById('users-list');
-    if (!usersListEl) return;
-    
-    usersListEl.innerHTML = '';
-    
-    filtered.forEach(user => {
+    usersList.forEach(user => {
         if (user.id === currentUser?.id) return;
         
         const userEl = document.createElement('div');
         userEl.className = `user-item ${user.status}`;
         userEl.dataset.userId = user.id;
-        
         userEl.innerHTML = `
             <div class="avatar">
                 <span class="initial">${user.username.charAt(0).toUpperCase()}</span>
             </div>
             <div class="user-details">
-                <span class="username">${user.username}</span>
-                <span class="status ${user.status}">${user.status === 'online' ? 'Онлайн' : 'Не в сети'}</span>
+                <span class="username">${escapeHtml(user.username)}</span>
+                <span class="status ${user.status || 'offline'}">
+                    ${user.status === 'online' ? 'Онлайн' : 'Не в сети'}
+                </span>
             </div>
         `;
-        
         userEl.onclick = () => selectUser(user);
         usersListEl.appendChild(userEl);
     });
 }
 
 function selectUser(user) {
+    if (!user || !user.id) {
+        showError('Неверные данные пользователя');
+        return;
+    }
+    
     currentChatUser = user;
+    currentGroupId = null;
+    
+    // Скрываем кнопку управления группой
+    const groupManageBtn = document.getElementById('group-manage-btn');
+    if (groupManageBtn) {
+        groupManageBtn.style.display = 'none';
+    }
     
     // Обновляем UI
     document.getElementById('chat-username').textContent = user.username;
     document.getElementById('chat-username-initial').textContent = user.username.charAt(0).toUpperCase();
     document.getElementById('chat-status').textContent = user.status === 'online' ? 'Онлайн' : 'Не в сети';
-    document.getElementById('chat-status').className = `status ${user.status}`;
+    document.getElementById('chat-status').className = `status ${user.status || 'offline'}`;
     
-    // Активируем кнопки
+    // Активируем кнопки звонков
     const audioCallBtn = document.getElementById('audio-call-btn');
     const videoCallBtn = document.getElementById('video-call-btn');
-    
     if (audioCallBtn) audioCallBtn.disabled = user.status !== 'online';
     if (videoCallBtn) videoCallBtn.disabled = user.status !== 'online';
     
+    // Активируем ввод
     document.getElementById('message-text').disabled = false;
     document.getElementById('send-btn').disabled = false;
+    document.getElementById('message-text').focus();
     
-    // Подсвечиваем выбранного пользователя
+    // Подсветка
     document.querySelectorAll('.user-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.userId == user.id);
+    });
+    document.querySelectorAll('.group-item').forEach(el => {
         el.classList.remove('active');
-        if (el.dataset.userId == user.id) {
-            el.classList.add('active');
-        }
     });
     
-    // Загружаем историю сообщений
-    loadMessageHistory(user.id);
+    // Загружаем историю
+    loadMessageHistory(user.id, false);
 }
 
-async function loadMessageHistory(userId) {
+async function loadMessageHistory(chatId, isGroup = false) {
     const container = document.getElementById('messages-container');
     if (!container) return;
-    container.innerHTML = '';
-
+    
+    container.innerHTML = '<div class="loading-messages">Загрузка...</div>';
+    
     try {
-        const resp = await authorizedFetch(`${API_BASE_URL}/messages/${userId}`);
+        const endpoint = isGroup 
+            ? `${API_BASE_URL}/groups/${chatId}/messages`
+            : `${API_BASE_URL}/messages/${chatId}`;
+            
+        const resp = await authorizedFetch(endpoint);
         const json = await resp.json();
         const list = json.data || [];
-        messages[userId] = list.map(m => ({ ...m, timestamp: m.created_at }));
+        
+        messages[chatId] = list.map(m => ({ 
+            ...m, 
+            timestamp: m.created_at || m.timestamp 
+        }));
     } catch (e) {
-        console.warn('Не удалось загрузить историю сообщений из API, используем локальную');
+        console.warn('Не удалось загрузить историю сообщений');
+        messages[chatId] = [];
     }
-
-    const history = messages[userId] || [];
+    
+    container.innerHTML = '';
+    
+    const history = messages[chatId] || [];
+    
+    if (history.length === 0) {
+        container.innerHTML = `
+            <div class="empty-chat">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <p>Нет сообщений</p>
+                <small>Отправьте первое сообщение</small>
+            </div>
+        `;
+        return;
+    }
+    
     history.forEach(msg => {
         addMessageToChat(msg, msg.sender_id === currentUser?.id ? 'sent' : 'received');
     });
+    
+    container.scrollTop = container.scrollHeight;
 }
 
 function sendMessage() {
@@ -500,6 +1029,8 @@ function sendMessage() {
         type: 'message',
         receiver_id: currentChatUser.id,
         content: input.value.trim(),
+        is_group: currentChatUser.is_group || false,
+        group_id: currentGroupId || null,
         timestamp: new Date().toISOString()
     };
     
@@ -564,57 +1095,15 @@ function showTypingIndicator(isTyping) {
     }
 }
 
-function showGroupModal() {
-    const modal = document.getElementById('group-modal');
-    const input = document.getElementById('group-name');
-    if (modal && input) {
-        input.value = '';
-        modal.classList.add('active');
-        input.focus();
-    }
-}
-
-function hideGroupModal() {
-    const modal = document.getElementById('group-modal');
-    if (modal) {
-        modal.classList.remove('active');
-    }
-}
-
-async function createNewGroup() {
-    const input = document.getElementById('group-name');
-    const groupName = input?.value.trim();
-    if (!groupName) {
-        showError('Введите название группы');
-        return;
-    }
-
-    try {
-        const resp = await authorizedFetch(`${API_BASE_URL}/groups/create`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: groupName })
-        });
-        if (!resp.ok) {
-            const txt = await resp.text();
-            throw new Error(`Ошибка ${resp.status}: ${txt}`);
-        }
-        hideGroupModal();
-        fetchGroups(); // Обновляем список групп
-        if (window.electronAPI) {
-            window.electronAPI.showNotification('Группа создана', groupName);
-        }
-        showError('Группа создана');
-    } catch (e) {
-        console.error('Create group error:', e);
-        showError(e.message);
-    }
-}
-
 // ==================== ЗВОНКИ ====================
 function initiateCall(type) {
     if (!currentChatUser) {
         showError('Выберите пользователя для звонка');
+        return;
+    }
+    
+    if (currentChatUser.is_group) {
+        showError('Групповые звонки пока не поддерживаются');
         return;
     }
     
@@ -633,6 +1122,7 @@ function initiateCall(type) {
         });
         
         window.electronAPI.showNotification('Вызов', `Звонок ${currentChatUser.username}`);
+        
         window.electronAPI.openCallWindow({
             call_id: null,
             call_type: type,
@@ -655,8 +1145,10 @@ function handleIncomingCall(data) {
             initiator_name: data.initiator_name || 'Пользователь'
         });
         
-        window.electronAPI.showNotification('Входящий вызов', 
-            `${data.initiator_name || 'Пользователь'} звонит вам`);
+        window.electronAPI.showNotification(
+            'Входящий вызов',
+            `${data.initiator_name || 'Пользователь'} звонит вам`
+        );
     }
 }
 
@@ -683,7 +1175,7 @@ async function startWebRTCConnection(remoteSdp = null) {
         cleanupWebRTC();
         
         const constraints = {
-            video: false, // Для теста отключаем видео
+            video: false,
             audio: {
                 echoCancellation: { ideal: true },
                 noiseSuppression: { ideal: true },
@@ -757,7 +1249,6 @@ async function startWebRTCConnection(remoteSdp = null) {
                 });
             }
         }
-        
     } catch (error) {
         console.error('WebRTC error:', error);
         showError('Ошибка вызова');
@@ -817,8 +1308,30 @@ function cleanupCall() {
 }
 
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+async function authorizedFetch(url, options = {}) {
+    const headers = {
+        ...options.headers,
+        'Authorization': `Bearer ${authToken}`
+    };
+    
+    const response = await fetch(url, {
+        ...options,
+        headers
+    });
+    
+    if (response.status === 401) {
+        showError('Сессия истекла. Пожалуйста, войдите снова.');
+        setTimeout(() => {
+            window.location.reload();
+        }, 2000);
+    }
+    
+    return response;
+}
+
 function showError(message) {
     console.log('Show message:', message);
+    
     const errorEl = document.getElementById('error-message');
     if (errorEl) {
         errorEl.textContent = message;
