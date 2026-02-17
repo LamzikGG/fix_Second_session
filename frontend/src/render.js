@@ -679,6 +679,14 @@ function updateGroupsList(groupsList) {
 async function createNewGroup() {
     const input = document.getElementById('group-name');
     const groupName = input?.value.trim();
+    const membersInput = document.getElementById('group-members');
+    const rawMembers = membersInput?.value || '';
+    
+    // Парсим логины участников из строки "user1, user2, user3"
+    const members = rawMembers
+        .split(',')
+        .map(m => m.trim())
+        .filter(m => m.length > 0);
     
     if (!groupName) {
         showError('Введите название группы');
@@ -689,7 +697,7 @@ async function createNewGroup() {
         const resp = await authorizedFetch(`${API_BASE_URL}/groups/create`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: groupName })
+            body: JSON.stringify({ name: groupName, members })
         });
         
         if (!resp.ok) {

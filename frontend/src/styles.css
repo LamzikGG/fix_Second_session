@@ -83,7 +83,8 @@ body {
 
 .screen.active {
     display: flex;
-    flex-direction: column;
+    /* Главное: показываем сайдбар и чат рядом, а не друг под другом */
+    flex-direction: row;
 }
 
 /* ==================== LOGIN SCREEN ==================== */
