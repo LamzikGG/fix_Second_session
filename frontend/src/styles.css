@@ -452,6 +452,42 @@ body {
     gap: 5px;
 }
 
+/* ==================== FRIEND REQUESTS ==================== */
+.friend-requests-section {
+    border-top: 1px solid #333;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 140px;
+    overflow-y: auto;
+}
+
+.friend-requests-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.friend-request-item {
+    padding: 8px 10px;
+    border-radius: 5px;
+    background: #2d2d2d;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.friend-request-item .username {
+    font-size: 13px;
+}
+
+.btn-small {
+    width: auto;
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
 .group-item {
     padding: 8px 10px;
     border-radius: 5px;

@@ -11,6 +11,7 @@ let audioContext = null;
 let analyser = null;
 let users = [];
 let friends = [];
+let friendRequests = [];
 let groups = [];
 let messages = {};
 let authToken = null;
@@ -241,7 +242,7 @@ function setupEventListeners() {
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: login })
+                        body: JSON.stringify({ user_login: login })
                     }
                 );
                 
@@ -274,6 +275,7 @@ function setupEventListeners() {
             loadChatInterface();
             fetchFriends();
             fetchGroups();
+            fetchFriendRequests();
         });
         
         window.electronAPI.onWebSocketMessage(handleWebSocketMessage);
@@ -564,6 +566,80 @@ async function fetchFriends() {
     }
 }
 
+async function fetchFriendRequests() {
+    try {
+        const resp = await authorizedFetch(`${API_BASE_URL}/friends/requests`);
+        const json = await resp.json();
+        friendRequests = json.data || [];
+        updateFriendRequestsList(friendRequests);
+    } catch (e) {
+        console.error('Fetch friend requests error:', e);
+    }
+}
+
+function updateFriendRequestsList(requests) {
+    const listEl = document.getElementById('friend-requests-list');
+    if (!listEl) return;
+    
+    listEl.innerHTML = '';
+    
+    if (!requests.length) {
+        listEl.innerHTML = `
+            <div class="empty-chat" style="padding: 10px;">
+                <p style="font-size: 12px;">Нет заявок</p>
+            </div>
+        `;
+        return;
+    }
+    
+    requests.forEach(req => {
+        const item = document.createElement('div');
+        item.className = 'friend-request-item';
+        item.innerHTML = `
+            <div class="avatar small">
+                <span class="initial">${req.username.charAt(0).toUpperCase()}</span>
+            </div>
+            <div class="user-details">
+                <span class="username">${escapeHtml(req.username)}</span>
+            </div>
+            <button class="btn-primary btn-small" data-request-id="${req.friendship_id}">
+                Принять
+            </button>
+        `;
+        listEl.appendChild(item);
+    });
+    
+    listEl.querySelectorAll('.btn-small').forEach(btn => {
+        btn.onclick = () => {
+            const id = btn.dataset.requestId;
+            if (id) {
+                acceptFriendRequest(parseInt(id, 10));
+            }
+        };
+    });
+}
+
+async function acceptFriendRequest(friendshipId) {
+    try {
+        const resp = await authorizedFetch(
+            `${API_BASE_URL}/friends/accept/${friendshipId}`,
+            { method: 'POST' }
+        );
+        
+        if (resp.ok) {
+            showError('Пользователь добавлен в друзья');
+            await fetchFriends();
+            await fetchFriendRequests();
+        } else {
+            const err = await resp.json();
+            showError(err.detail || 'Не удалось принять заявку');
+        }
+    } catch (e) {
+        console.error('Accept friend error:', e);
+        showError('Ошибка при принятии заявки');
+    }
+}
+
 // ==================== ГРУППЫ ====================
 async function fetchGroups() {
     try {
@@ -706,48 +782,55 @@ async function showGroupManageModal(groupId) {
     
     // Загружаем информацию о группе
     try {
-        const resp = await authorizedFetch(`${API_BASE_URL}/groups/${groupId}`);
-        const json = await resp.json();
-        const group = json.data;
+        const [groupResp, membersResp] = await Promise.all([
+            authorizedFetch(`${API_BASE_URL}/groups/${groupId}`),
+            authorizedFetch(`${API_BASE_URL}/groups/${groupId}/members`)
+        ]);
+        
+        const groupJson = await groupResp.json();
+        const membersJson = await membersResp.json();
+        
+        const group = groupJson.data;
+        const members = membersJson.data || [];
         
         membersList.innerHTML = '';
         
-        if (group.members && Array.isArray(group.members)) {
-            group.members.forEach(member => {
-                const memberEl = document.createElement('div');
-                memberEl.className = 'group-member-item';
-                const isYou = member.id === currentUser.id;
-                const isAdmin = member.is_admin;
-                
-                memberEl.innerHTML = `
-                    <div class="avatar small">
-                        <span class="initial">${member.username.charAt(0).toUpperCase()}</span>
-                    </div>
-                    <div class="member-info">
-                        <span class="username">
-                            ${escapeHtml(member.username)}
-                            ${isYou ? '<span class="you-badge">Вы</span>' : ''}
-                            ${isAdmin ? '<span class="admin-badge">Админ</span>' : ''}
-                        </span>
-                    </div>
-                    ${!isYou && group.is_owner ? `
-                        <button class="btn-remove-member" data-member-id="${member.id}">
-                            ×
-                        </button>
-                    ` : ''}
-                `;
-                membersList.appendChild(memberEl);
-            });
-        }
+        const isOwner = group.creator_id === currentUser.id;
+        
+        members.forEach(member => {
+            const memberEl = document.createElement('div');
+            memberEl.className = 'group-member-item';
+            const isYou = member.id === currentUser.id;
+            const isAdmin = member.is_admin;
+            
+            memberEl.innerHTML = `
+                <div class="avatar small">
+                    <span class="initial">${member.username.charAt(0).toUpperCase()}</span>
+                </div>
+                <div class="member-info">
+                    <span class="username">
+                        ${escapeHtml(member.username)}
+                        ${isYou ? '<span class="you-badge">Вы</span>' : ''}
+                        ${isAdmin ? '<span class="admin-badge">Админ</span>' : ''}
+                    </span>
+                </div>
+                ${!isYou && (isOwner || group.is_admin) ? `
+                    <button class="btn-remove-member" data-member-id="${member.id}">
+                        ×
+                    </button>
+                ` : ''}
+            `;
+            membersList.appendChild(memberEl);
+        });
         
         // Показываем секцию добавления только для владельца/админа
         if (addMemberSection) {
-            addMemberSection.style.display = group.is_owner ? 'block' : 'none';
+            addMemberSection.style.display = (isOwner || group.is_admin) ? 'block' : 'none';
         }
         
         // Кнопка удаления только для владельца
         if (deleteBtn) {
-            deleteBtn.style.display = group.is_owner ? 'block' : 'none';
+            deleteBtn.style.display = isOwner ? 'block' : 'none';
             deleteBtn.onclick = () => deleteGroup(groupId);
         }
         
@@ -890,6 +973,7 @@ function handleWebSocketMessage(message) {
                 );
             }
             showError(`Новый запрос в друзья от ${message.from_username}`);
+            fetchFriendRequests();
             break;
             
         case 'friend_accepted':

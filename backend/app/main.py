@@ -253,6 +253,7 @@ async def get_messages(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """История личных сообщений 1-на-1"""
     messages = db.query(Message).filter(
         ((Message.sender_id == current_user.id) & (Message.receiver_id == user_id)) |
         ((Message.sender_id == user_id) & (Message.receiver_id == current_user.id))
@@ -272,7 +273,7 @@ async def get_messages(
         for msg in messages
     ]
     
-    # Помечаем сообщения как прочитанные
+    # Помечаем личные входящие сообщения как прочитанные
     unread = db.query(Message).filter(
         Message.sender_id == user_id,
         Message.receiver_id == current_user.id,
@@ -282,6 +283,48 @@ async def get_messages(
     for msg in unread:
         msg.is_read = True
     db.commit()
+    
+    return success_response(data=messages_list)
+
+
+@app.get("/groups/{group_id}/messages", response_model=dict)
+async def get_group_messages(
+    group_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    История сообщений группы.
+    Возвращает сообщения только если текущий пользователь является участником группы.
+    """
+    membership = db.query(GroupMember).filter(
+        GroupMember.group_id == group_id,
+        GroupMember.user_id == current_user.id
+    ).first()
+    
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group"
+        )
+    
+    group_messages = db.query(Message).filter(
+        Message.group_id == group_id
+    ).order_by(Message.created_at).all()
+    
+    messages_list = [
+        {
+            "id": msg.id,
+            "sender_id": msg.sender_id,
+            "receiver_id": msg.receiver_id,
+            "content": msg.content,
+            "is_read": msg.is_read,
+            "created_at": msg.created_at.isoformat(),
+            "is_group": msg.is_group,
+            "group_id": msg.group_id
+        }
+        for msg in group_messages
+    ]
     
     return success_response(data=messages_list)
 
