@@ -2,6 +2,11 @@ const { app, BrowserWindow, ipcMain, screen, Notification } = require('electron'
 const path = require('path');
 const WebSocket = require('ws');
 
+// Разрешаем воспроизведение аудио без user-gesture.
+// Это критично для сценария, когда "Принять" нажимают в call.html,
+// а звук должен играть в главном окне.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 let mainWindow;
 let callWindow;
 let memoryCheckInterval;

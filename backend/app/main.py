@@ -138,18 +138,24 @@ async def handle_call_response(response_data: dict, user_id: int, db: Session):
         call.status = "accepted"
         call.ended_at = None
         db.commit()
+        print(f"✅ Call {call_id} принят пользователем {user_id}")
         if call.initiator_id in user_connections:
+            print(f"📤 Отправляю call_accepted с SDP answer от {user_id} к инициатору {call.initiator_id}")
             await user_connections[call.initiator_id].send_json({
                 "type": "call_accepted",
                 "call_id": call_id,
                 "sdp": sdp
             })
+        else:
+            print(f"⚠️ Инициатор {call.initiator_id} офлайн, не могу отправить call_accepted")
 
 async def handle_ice_candidate(candidate_data: dict, user_id: int, db: Session):
     """Обработка ICE кандидата для WebRTC"""
     call_id = candidate_data["call_id"]
     candidate = candidate_data["candidate"]
     target_user_id = candidate_data["target_user_id"]
+    
+    print(f"📨 Пересылка ICE candidate: {user_id} -> {target_user_id}, call_id: {call_id}")
     
     if target_user_id in user_connections:
         await user_connections[target_user_id].send_json({
@@ -158,6 +164,9 @@ async def handle_ice_candidate(candidate_data: dict, user_id: int, db: Session):
             "candidate": candidate,
             "sender_id": user_id
         })
+        print(f"✅ ICE candidate доставлен к {target_user_id}")
+    else:
+        print(f"⚠️ Пользователь {target_user_id} офлайн, ICE candidate не доставлен")
 
 # ==================== АВТОРИЗАЦИЯ ====================
 @app.post("/register", response_model=dict)
@@ -854,6 +863,25 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
             data = await websocket.receive_text()
             message_data = json.loads(data)
             message_type = message_data.get("type")
+
+            # Сырые входящие запросы (как вы просили — без "обёрток")
+            if message_type in {
+                "message",
+                "call_initiate",
+                "call_offer",
+                "call_response",
+                "ice_candidate",
+                "call_end",
+                "friend_request",
+                "group_invite",
+                "remove_from_group",
+                "leave_group",
+                "delete_group",
+            }:
+                try:
+                    print("WS_RECV:", json.dumps(message_data, ensure_ascii=False))
+                except Exception:
+                    print("WS_RECV:", message_data)
             
             db = SessionLocal()
             try:
@@ -865,17 +893,26 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
                     # Caller отправляет offer -> пересылаем callee
                     cid = message_data.get("call_id")
                     sdp = message_data.get("sdp")
+                    print(f"📤 Caller {user_id} отправил offer для call {cid}")
                     if cid and sdp:
                         call = db.query(Call).filter(Call.id == cid).first()
-                        if call and call.initiator_id == user_id and call.receiver_id in user_connections:
-                            await user_connections[call.receiver_id].send_json({
-                                "type": "call_offer",
-                                "call_id": cid,
-                                "sdp": sdp,
-                            })
+                        if call and call.initiator_id == user_id:
+                            if call.receiver_id in user_connections:
+                                print(f"✅ Пересылаю offer от {user_id} к {call.receiver_id}")
+                                await user_connections[call.receiver_id].send_json({
+                                    "type": "call_offer",
+                                    "call_id": cid,
+                                    "sdp": sdp,
+                                })
+                            else:
+                                print(f"⚠️ Получатель {call.receiver_id} офлайн, не могу переслать offer")
+                        else:
+                            print(f"⚠️ Call {cid} не найден или пользователь {user_id} не инициатор")
                 elif message_type == "call_response":
                     await handle_call_response(message_data, user_id, db)
                 elif message_type == "ice_candidate":
+                    target_id = message_data.get("target_user_id")
+                    print(f"🧊 ICE candidate от {user_id} к {target_id}")
                     await handle_ice_candidate(message_data, user_id, db)
                 elif message_type == "call_end":
                     cid = message_data.get("call_id")

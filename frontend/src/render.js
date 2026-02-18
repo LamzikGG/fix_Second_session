@@ -958,13 +958,16 @@ function handleWebSocketMessage(message) {
             break;
             
         case 'call_initiated':
+            console.log('📞 Caller: получен call_initiated, callId:', message.call_id);
             callId = message.call_id;
             callPeerId = message.receiver_id || callPeerId;
+            console.log('👤 Caller: callPeerId установлен:', callPeerId);
             showCallBar('Вызов ' + (currentChatUser ? currentChatUser.username : '') + '...');
             startWebRTCConnection(null);
             break;
             
         case 'call_offer':
+            console.log('📥 Callee: получен offer, сохраняю в pendingOffer');
             pendingOffer = { call_id: message.call_id, sdp: message.sdp };
             break;
             
@@ -973,13 +976,33 @@ function handleWebSocketMessage(message) {
             break;
             
         case 'call_accepted':
+            console.log('📥 Caller: получен answer (call_accepted)');
             if (message.sdp && peerConnection) {
-                peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp))
-                    .then(() => {
-                        showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
-                    })
-                    .catch(err => console.error('setRemoteDescription error:', err));
+                // Проверяем текущее состояние remote description
+                const currentRemoteDesc = peerConnection.remoteDescription;
+                if (currentRemoteDesc && currentRemoteDesc.type === 'answer') {
+                    console.log('⚠️ Remote description уже установлен (answer), пропускаем');
+                } else {
+                    console.log('🔄 Устанавливаю remote description (answer)...');
+                    peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp))
+                        .then(() => {
+                            console.log('✅ Caller: remote description установлен (answer)');
+                            console.log('📊 Remote description:', peerConnection.remoteDescription.type);
+                            showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
+                        })
+                        .catch(err => {
+                            console.error('❌ Ошибка установки remote description (answer):', err);
+                            if (err.message && err.message.includes('already')) {
+                                console.log('ℹ️ Remote description уже был установлен, продолжаем...');
+                            } else {
+                                showError('Ошибка установления соединения');
+                            }
+                        });
+                }
             } else {
+                console.warn('⚠️ call_accepted без SDP или peerConnection');
+                if (!message.sdp) console.warn('   SDP отсутствует');
+                if (!peerConnection) console.warn('   peerConnection отсутствует');
                 showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
             }
             break;
@@ -1270,9 +1293,32 @@ function initiateCall(type) {
 }
 
 function handleIncomingCall(data) {
+    console.log('📞 Входящий звонок от', data.initiator_id, data.initiator_name);
     callId = data.call_id;
     isCaller = false;
     callPeerId = data.initiator_id;
+    
+    // Устанавливаем currentChatUser для отображения имени в call bar
+    if (!currentChatUser || currentChatUser.id !== data.initiator_id) {
+        // Ищем пользователя в списке друзей
+        const caller = friends.find(f => f.id === data.initiator_id);
+        if (caller) {
+            currentChatUser = {
+                id: caller.id,
+                username: caller.username || data.initiator_name || 'Пользователь',
+                status: caller.status || 'online'
+            };
+        } else {
+            currentChatUser = {
+                id: data.initiator_id,
+                username: data.initiator_name || 'Пользователь',
+                status: 'online'
+            };
+        }
+    }
+    
+    console.log('👤 Callee: callPeerId установлен:', callPeerId, 'caller:', currentChatUser.username);
+    
     // Окно входящего звонка показываем только тому, кому звонят (callee)
     if (window.electronAPI) {
         window.electronAPI.openCallWindow({
@@ -1308,8 +1354,11 @@ function handleCallResponse(response) {
             }
         } else if (pendingOffer) {
             // Callee нажал «Принять» в call.html — запускаем WebRTC с сохранённым offer
+            console.log('✅ Callee: начинаю WebRTC с сохранённым offer, callId:', pendingOffer.call_id);
             callId = pendingOffer.call_id;
             isCaller = false;
+            // callPeerId уже должен быть установлен в handleIncomingCall
+            console.log('👤 Callee: callPeerId:', callPeerId);
             startWebRTCConnection(pendingOffer.sdp);
             pendingOffer = null;
         }
@@ -1323,6 +1372,7 @@ function handleCallEnded() {
 }
 
 async function startWebRTCConnection(remoteSdp = null) {
+    console.log('🚀 startWebRTCConnection вызван, isCaller:', isCaller, 'remoteSdp:', remoteSdp ? 'есть' : 'нет');
     try {
         cleanupWebRTC();
         
@@ -1339,10 +1389,12 @@ async function startWebRTCConnection(remoteSdp = null) {
         };
         
         try {
+            console.log('🎤 Запрос доступа к микрофону...');
             localStream = await navigator.mediaDevices.getUserMedia(constraints);
+            console.log('✅ Доступ к микрофону получен');
             setupAudioProcessing(localStream);
         } catch (err) {
-            console.error('Media error:', err);
+            console.error('❌ Ошибка доступа к микрофону:', err);
             showError('Не удалось получить доступ к микрофону');
             return;
         }
@@ -1353,37 +1405,129 @@ async function startWebRTCConnection(remoteSdp = null) {
             ]
         });
         
+        // Логирование состояния соединения
+        peerConnection.onconnectionstatechange = () => {
+            console.log('🔌 WebRTC connection state:', peerConnection.connectionState);
+            if (peerConnection.connectionState === 'connected') {
+                console.log('✅ WebRTC соединение установлено!');
+                showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
+            } else if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'disconnected') {
+                console.warn('⚠️ WebRTC соединение потеряно:', peerConnection.connectionState);
+            }
+        };
+        
         peerConnection.onicecandidate = (event) => {
             if (event.candidate && callId && window.electronAPI) {
+                console.log('📤 Отправка ICE candidate к пользователю', callPeerId);
                 window.electronAPI.sendWebSocketMessage({
                     type: 'ice_candidate',
                     call_id: callId,
                     candidate: event.candidate,
                     target_user_id: callPeerId
                 });
+            } else if (!event.candidate) {
+                console.log('✅ Все ICE кандидаты собраны');
             }
         };
         
         peerConnection.ontrack = (event) => {
-            remoteStream = event.streams[0];
+            console.log('🎵 Получен remote track:', event.track.kind, event.track.id, 'readyState:', event.track.readyState);
+            
+            // Используем первый stream из события или создаём новый
+            if (event.streams && event.streams.length > 0) {
+                remoteStream = event.streams[0];
+            } else {
+                console.warn('⚠️ Stream отсутствует в событии, используем существующий');
+            }
+            
+            if (!remoteStream) {
+                console.error('❌ Remote stream отсутствует!');
+                return;
+            }
+            
+            // Принудительно включаем трек
+            if (event.track) {
+                event.track.enabled = true;
+                console.log('🔊 Включен трек:', event.track.kind, event.track.id);
+            }
+            
+            // Проверяем наличие аудио треков
+            const audioTracks = remoteStream.getAudioTracks();
+            console.log('📻 Аудио треков в stream:', audioTracks.length);
+            audioTracks.forEach(track => {
+                console.log(`  - ${track.id}: enabled=${track.enabled}, readyState=${track.readyState}, muted=${track.muted}`);
+                track.enabled = true;
+            });
+            
             const remoteAudio = document.getElementById('remote-audio');
             if (remoteAudio) {
-                remoteAudio.srcObject = remoteStream;
-                remoteAudio.play().catch(function() {});
-            }
-            showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
-            if (window.electronAPI) {
-                window.electronAPI.showNotification('Вызов подключен', 'Собеседник присоединился');
+                // Обновляем srcObject только если его ещё нет или stream изменился
+                if (remoteAudio.srcObject !== remoteStream) {
+                    console.log('🔄 Обновление srcObject для remote-audio');
+                    remoteAudio.srcObject = remoteStream;
+                }
+                
+                remoteAudio.muted = false;
+                remoteAudio.volume = 1.0;
+                
+                // Пытаемся воспроизвести
+                const playPromise = remoteAudio.play();
+                if (playPromise !== undefined) {
+                    playPromise
+                        .then(() => {
+                            console.log('✅ Удалённый звук воспроизводится, volume:', remoteAudio.volume, 'muted:', remoteAudio.muted);
+                            console.log('📊 Audio element состояние:', {
+                                paused: remoteAudio.paused,
+                                ended: remoteAudio.ended,
+                                readyState: remoteAudio.readyState,
+                                currentTime: remoteAudio.currentTime
+                            });
+                            showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
+                            if (window.electronAPI) {
+                                window.electronAPI.showNotification('Вызов подключен', 'Собеседник присоединился');
+                            }
+                        })
+                        .catch(err => {
+                            console.error('❌ Ошибка воспроизведения звука:', err);
+                            console.error('   Audio element:', {
+                                paused: remoteAudio.paused,
+                                muted: remoteAudio.muted,
+                                volume: remoteAudio.volume,
+                                srcObject: remoteAudio.srcObject ? 'есть' : 'нет'
+                            });
+                            showError('Не удалось воспроизвести звук собеседника. Проверьте громкость.');
+                        });
+                }
+            } else {
+                console.error('❌ Элемент remote-audio не найден!');
             }
         };
         
+        // Обработка ошибок ICE
+        peerConnection.oniceconnectionstatechange = () => {
+            console.log('🧊 ICE connection state:', peerConnection.iceConnectionState);
+            if (peerConnection.iceConnectionState === 'failed') {
+                console.error('❌ ICE соединение провалилось');
+                showError('Ошибка установления соединения');
+            }
+        };
+        
+        // Добавляем локальные треки с логированием
         localStream.getTracks().forEach(track => {
+            console.log('📤 Добавлен локальный трек:', track.kind, track.id, track.enabled ? 'enabled' : 'disabled');
             peerConnection.addTrack(track, localStream);
         });
         
+        console.log('🎤 Локальный stream треки:', localStream.getTracks().map(t => `${t.kind}:${t.id}:${t.enabled ? 'enabled' : 'disabled'}`));
+        
         if (isCaller) {
-            const offer = await peerConnection.createOffer();
+            console.log('📞 Caller: создаю offer...');
+            const offer = await peerConnection.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: false
+            });
             await peerConnection.setLocalDescription(offer);
+            console.log('📤 Caller: отправляю offer, callId:', callId);
             if (window.electronAPI) {
                 window.electronAPI.sendWebSocketMessage({
                     type: 'call_offer',
@@ -1392,18 +1536,36 @@ async function startWebRTCConnection(remoteSdp = null) {
                 });
             }
         } else if (remoteSdp) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(remoteSdp));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            if (window.electronAPI) {
-                window.electronAPI.sendWebSocketMessage({
-                    type: 'call_response',
-                    call_id: callId,
-                    action: 'accept',
-                    sdp: answer
+            console.log('📥 Callee: получаю offer, создаю answer...');
+            try {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(remoteSdp));
+                console.log('✅ Callee: remote description установлен (offer)');
+                
+                const answer = await peerConnection.createAnswer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: false
                 });
+                await peerConnection.setLocalDescription(answer);
+                console.log('✅ Callee: local description установлен (answer)');
+                console.log('📤 Callee: отправляю answer, callId:', callId);
+                
+                if (window.electronAPI) {
+                    window.electronAPI.sendWebSocketMessage({
+                        type: 'call_response',
+                        call_id: callId,
+                        action: 'accept',
+                        sdp: answer
+                    });
+                }
+                showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
+            } catch (err) {
+                console.error('❌ Ошибка при обработке offer:', err);
+                if (err.message && err.message.includes('already')) {
+                    console.log('ℹ️ Remote description уже был установлен, продолжаем...');
+                } else {
+                    throw err;
+                }
             }
-            showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
         }
     } catch (error) {
         console.error('WebRTC error:', error);
@@ -1413,12 +1575,22 @@ async function startWebRTCConnection(remoteSdp = null) {
 }
 
 function handleIceCandidate(message) {
-    if (!peerConnection) return;
+    if (!peerConnection) {
+        console.warn('⚠️ peerConnection отсутствует при получении ICE candidate');
+        return;
+    }
     
     try {
-        peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+        console.log('📥 Получен ICE candidate от пользователя', message.sender_id);
+        peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate))
+            .then(() => {
+                console.log('✅ ICE candidate добавлен успешно');
+            })
+            .catch(err => {
+                console.error('❌ Ошибка добавления ICE candidate:', err);
+            });
     } catch (e) {
-        console.error('Error adding ICE candidate:', e);
+        console.error('❌ Ошибка обработки ICE candidate:', e);
     }
 }
 
