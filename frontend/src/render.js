@@ -8,6 +8,7 @@ let remoteStream = null;
 let callId = null;
 let isCaller = false;
 let pendingOffer = null; // у того, кому звонят: offer от caller до нажатия «Принять»
+let callPeerId = null; // id собеседника для ICE/завершения звонка
 let audioContext = null;
 let analyser = null;
 let users = [];
@@ -958,6 +959,7 @@ function handleWebSocketMessage(message) {
             
         case 'call_initiated':
             callId = message.call_id;
+            callPeerId = message.receiver_id || callPeerId;
             showCallBar('Вызов ' + (currentChatUser ? currentChatUser.username : '') + '...');
             startWebRTCConnection(null);
             break;
@@ -1254,6 +1256,7 @@ function initiateCall(type) {
     }
     
     isCaller = true;
+    callPeerId = currentChatUser.id;
     
     if (window.electronAPI) {
         window.electronAPI.sendWebSocketMessage({
@@ -1269,6 +1272,7 @@ function initiateCall(type) {
 function handleIncomingCall(data) {
     callId = data.call_id;
     isCaller = false;
+    callPeerId = data.initiator_id;
     // Окно входящего звонка показываем только тому, кому звонят (callee)
     if (window.electronAPI) {
         window.electronAPI.openCallWindow({
@@ -1355,7 +1359,7 @@ async function startWebRTCConnection(remoteSdp = null) {
                     type: 'ice_candidate',
                     call_id: callId,
                     candidate: event.candidate,
-                    target_user_id: isCaller ? currentChatUser.id : currentUser.id
+                    target_user_id: callPeerId
                 });
             }
         };
@@ -1454,6 +1458,7 @@ function cleanupWebRTC() {
 
 function cleanupCall() {
     pendingOffer = null;
+    callPeerId = null;
     cleanupWebRTC();
     callId = null;
     isCaller = false;
