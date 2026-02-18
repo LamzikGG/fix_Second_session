@@ -7,6 +7,7 @@ let localStream = null;
 let remoteStream = null;
 let callId = null;
 let isCaller = false;
+let pendingOffer = null; // у того, кому звонят: offer от caller до нажатия «Принять»
 let audioContext = null;
 let analyser = null;
 let users = [];
@@ -140,16 +141,25 @@ function setupEventListeners() {
         };
     }
     
-    // Кнопки звонков
-    const videoCallBtn = document.getElementById('video-call-btn');
+    // Аудио звонок
     const audioCallBtn = document.getElementById('audio-call-btn');
-    
-    if (videoCallBtn) {
-        videoCallBtn.onclick = () => initiateCall('video');
-    }
-    
     if (audioCallBtn) {
         audioCallBtn.onclick = () => initiateCall('audio');
+    }
+    
+    // Завершить звонок
+    const callBarHangup = document.getElementById('call-bar-hangup');
+    if (callBarHangup) {
+        callBarHangup.onclick = () => {
+            if (callId && window.electronAPI) {
+                window.electronAPI.sendWebSocketMessage({
+                    type: 'call_end',
+                    call_id: callId
+                });
+            }
+            cleanupCall();
+            hideCallBar();
+        };
     }
     
     // Кнопка новой группы (в groups-section)
@@ -760,9 +770,9 @@ async function selectGroup(group) {
         groupManageBtn.onclick = () => showGroupManageModal(group.id);
     }
     
-    // Блокируем звонки для групп
-    document.getElementById('audio-call-btn').disabled = true;
-    document.getElementById('video-call-btn').disabled = true;
+    // Блокируем звонок для групп
+    const acBtn = document.getElementById('audio-call-btn');
+    if (acBtn) acBtn.disabled = true;
     
     // Активируем ввод сообщений
     document.getElementById('message-text').disabled = false;
@@ -946,16 +956,39 @@ function handleWebSocketMessage(message) {
             }
             break;
             
+        case 'call_initiated':
+            callId = message.call_id;
+            showCallBar('Вызов ' + (currentChatUser ? currentChatUser.username : '') + '...');
+            startWebRTCConnection(null);
+            break;
+            
+        case 'call_offer':
+            pendingOffer = { call_id: message.call_id, sdp: message.sdp };
+            break;
+            
         case 'incoming_call':
             handleIncomingCall(message);
             break;
             
         case 'call_accepted':
-            showError('Вызов принят');
+            if (message.sdp && peerConnection) {
+                peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp))
+                    .then(() => {
+                        showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
+                    })
+                    .catch(err => console.error('setRemoteDescription error:', err));
+            } else {
+                showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
+            }
             break;
             
         case 'call_declined':
             showError('Вызов отклонен');
+            handleCallEnded();
+            break;
+            
+        case 'call_end':
+            showError('Собеседник завершил звонок');
             handleCallEnded();
             break;
             
@@ -1042,11 +1075,9 @@ function selectUser(user) {
     document.getElementById('chat-status').textContent = user.status === 'online' ? 'Онлайн' : 'Не в сети';
     document.getElementById('chat-status').className = `status ${user.status || 'offline'}`;
     
-    // Активируем кнопки звонков
+    // Активируем кнопку звонка
     const audioCallBtn = document.getElementById('audio-call-btn');
-    const videoCallBtn = document.getElementById('video-call-btn');
     if (audioCallBtn) audioCallBtn.disabled = user.status !== 'online';
-    if (videoCallBtn) videoCallBtn.disabled = user.status !== 'online';
     
     // Активируем ввод
     document.getElementById('message-text').disabled = false;
@@ -1188,6 +1219,24 @@ function showTypingIndicator(isTyping) {
 }
 
 // ==================== ЗВОНКИ ====================
+function showCallBar(text) {
+    const bar = document.getElementById('call-bar');
+    const textEl = document.getElementById('call-bar-text');
+    if (bar && textEl) {
+        textEl.textContent = text;
+        bar.style.display = 'flex';
+    }
+}
+
+function hideCallBar() {
+    const bar = document.getElementById('call-bar');
+    if (bar) bar.style.display = 'none';
+    const ra = document.getElementById('remote-audio');
+    if (ra) {
+        ra.srcObject = null;
+    }
+}
+
 function initiateCall(type) {
     if (!currentChatUser) {
         showError('Выберите пользователя для звонка');
@@ -1210,56 +1259,63 @@ function initiateCall(type) {
         window.electronAPI.sendWebSocketMessage({
             type: 'call_initiate',
             receiver_id: currentChatUser.id,
-            call_type: type
+            call_type: 'audio'
         });
-        
-        window.electronAPI.showNotification('Вызов', `Звонок ${currentChatUser.username}`);
-        
-        window.electronAPI.openCallWindow({
-            call_id: null,
-            call_type: type,
-            initiator_id: currentUser.id,
-            target_id: currentChatUser.id,
-            initiator_name: currentUser.username
-        });
+        showCallBar('Вызов ' + currentChatUser.username + '...');
+        window.electronAPI.showNotification('Вызов', 'Звонок ' + currentChatUser.username);
     }
 }
 
 function handleIncomingCall(data) {
     callId = data.call_id;
     isCaller = false;
-    
+    // Окно входящего звонка показываем только тому, кому звонят (callee)
     if (window.electronAPI) {
         window.electronAPI.openCallWindow({
             call_id: data.call_id,
-            call_type: data.call_type,
+            call_type: 'audio',
             initiator_id: data.initiator_id,
             initiator_name: data.initiator_name || 'Пользователь'
         });
-        
         window.electronAPI.showNotification(
             'Входящий вызов',
-            `${data.initiator_name || 'Пользователь'} звонит вам`
+            (data.initiator_name || 'Пользователь') + ' звонит вам'
         );
     }
 }
 
 function handleCallResponse(response) {
-    console.log('Call response:', response);
-    
+    if (response.action === 'decline') {
+        showError('Вызов отклонен');
+        pendingOffer = null;
+        cleanupCall();
+        hideCallBar();
+        return;
+    }
     if (response.action === 'accept') {
         if (response.sdp) {
-            startWebRTCConnection(response.sdp);
+            // Ответ (answer) от callee — устанавливаем у caller
+            if (peerConnection) {
+                peerConnection.setRemoteDescription(new RTCSessionDescription(response.sdp))
+                    .then(() => {
+                        showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
+                    })
+                    .catch(err => console.error('setRemoteDescription error:', err));
+            }
+        } else if (pendingOffer) {
+            // Callee нажал «Принять» в call.html — запускаем WebRTC с сохранённым offer
+            callId = pendingOffer.call_id;
+            isCaller = false;
+            startWebRTCConnection(pendingOffer.sdp);
+            pendingOffer = null;
         }
-    } else if (response.action === 'decline') {
-        showError('Вызов отклонен');
-        cleanupCall();
     }
 }
 
 function handleCallEnded() {
     showError('Вызов завершен');
     cleanupCall();
+    hideCallBar();
 }
 
 async function startWebRTCConnection(remoteSdp = null) {
@@ -1306,6 +1362,12 @@ async function startWebRTCConnection(remoteSdp = null) {
         
         peerConnection.ontrack = (event) => {
             remoteStream = event.streams[0];
+            const remoteAudio = document.getElementById('remote-audio');
+            if (remoteAudio) {
+                remoteAudio.srcObject = remoteStream;
+                remoteAudio.play().catch(function() {});
+            }
+            showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
             if (window.electronAPI) {
                 window.electronAPI.showNotification('Вызов подключен', 'Собеседник присоединился');
             }
@@ -1318,12 +1380,10 @@ async function startWebRTCConnection(remoteSdp = null) {
         if (isCaller) {
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
-            
             if (window.electronAPI) {
                 window.electronAPI.sendWebSocketMessage({
-                    type: 'call_response',
+                    type: 'call_offer',
                     call_id: callId,
-                    action: 'accept',
                     sdp: offer
                 });
             }
@@ -1331,7 +1391,6 @@ async function startWebRTCConnection(remoteSdp = null) {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(remoteSdp));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            
             if (window.electronAPI) {
                 window.electronAPI.sendWebSocketMessage({
                     type: 'call_response',
@@ -1340,6 +1399,7 @@ async function startWebRTCConnection(remoteSdp = null) {
                     sdp: answer
                 });
             }
+            showCallBar('Разговор с ' + (currentChatUser ? currentChatUser.username : ''));
         }
     } catch (error) {
         console.error('WebRTC error:', error);
@@ -1376,17 +1436,16 @@ function cleanupWebRTC() {
         localStream.getTracks().forEach(track => track.stop());
         localStream = null;
     }
-    
     if (remoteStream) {
         remoteStream.getTracks().forEach(track => track.stop());
         remoteStream = null;
     }
-    
+    const remoteAudio = document.getElementById('remote-audio');
+    if (remoteAudio) remoteAudio.srcObject = null;
     if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
     }
-    
     if (analyser) {
         try { analyser.disconnect(); } catch (e) {}
         analyser = null;
@@ -1394,9 +1453,11 @@ function cleanupWebRTC() {
 }
 
 function cleanupCall() {
+    pendingOffer = null;
     cleanupWebRTC();
     callId = null;
     isCaller = false;
+    hideCallBar();
 }
 
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================

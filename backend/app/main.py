@@ -79,7 +79,7 @@ async def handle_chat_message(message_data: dict, sender_id: int, db: Session):
 async def handle_call_initiate(call_data: dict, initiator_id: int, db: Session):
     """Обработка инициации звонка"""
     receiver_id = call_data["receiver_id"]
-    call_type = call_data["call_type"]
+    call_type = call_data.get("call_type", "audio")
     
     new_call = Call(
         initiator_id=initiator_id,
@@ -91,11 +91,23 @@ async def handle_call_initiate(call_data: dict, initiator_id: int, db: Session):
     db.commit()
     db.refresh(new_call)
     
+    initiator = db.query(User).filter(User.id == initiator_id).first()
+    initiator_name = initiator.username if initiator else "Пользователь"
+    
+    # Инициатору отправляем call_id для последующей отправки offer
+    if initiator_id in user_connections:
+        await user_connections[initiator_id].send_json({
+            "type": "call_initiated",
+            "call_id": new_call.id,
+            "receiver_id": receiver_id,
+        })
+    
     if receiver_id in user_connections:
         notification = {
             "type": "incoming_call",
             "call_id": new_call.id,
             "initiator_id": initiator_id,
+            "initiator_name": initiator_name,
             "call_type": call_type,
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -849,10 +861,30 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
                     await handle_chat_message(message_data, user_id, db)
                 elif message_type == "call_initiate":
                     await handle_call_initiate(message_data, user_id, db)
+                elif message_type == "call_offer":
+                    # Caller отправляет offer -> пересылаем callee
+                    cid = message_data.get("call_id")
+                    sdp = message_data.get("sdp")
+                    if cid and sdp:
+                        call = db.query(Call).filter(Call.id == cid).first()
+                        if call and call.initiator_id == user_id and call.receiver_id in user_connections:
+                            await user_connections[call.receiver_id].send_json({
+                                "type": "call_offer",
+                                "call_id": cid,
+                                "sdp": sdp,
+                            })
                 elif message_type == "call_response":
                     await handle_call_response(message_data, user_id, db)
                 elif message_type == "ice_candidate":
                     await handle_ice_candidate(message_data, user_id, db)
+                elif message_type == "call_end":
+                    cid = message_data.get("call_id")
+                    if cid:
+                        call = db.query(Call).filter(Call.id == cid).first()
+                        if call:
+                            other_id = call.receiver_id if call.initiator_id == user_id else call.initiator_id
+                            if other_id in user_connections:
+                                await user_connections[other_id].send_json({"type": "call_end", "call_id": cid})
                 elif message_type == "friend_request":
                     # Обработка запроса в друзья через WebSocket
                     target_user_id = message_data.get("target_user_id")
