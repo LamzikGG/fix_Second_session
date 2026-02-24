@@ -168,7 +168,7 @@ async def handle_ice_candidate(candidate_data: dict, user_id: int, db: Session):
     else:
         print(f"⚠️ Пользователь {target_user_id} офлайн, ICE candidate не доставлен")
 
-# ==================== АВТОРИЗАЦИЯ ====================
+# авторизация
 @app.post("/register", response_model=dict)
 async def register(user: UserCreate, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.username == user.username).first()
@@ -217,7 +217,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
         message="Login successful"
     )
 
-# ==================== ПОИСК ПОЛЬЗОВАТЕЛЕЙ ====================
+# поиск пользователей 
 @app.get("/users/search", response_model=dict)
 async def search_users(
     q: str,
@@ -274,7 +274,7 @@ async def get_messages(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """История личных сообщений 1-на-1"""
+    """история сообщений 1на1"""
     messages = db.query(Message).filter(
         ((Message.sender_id == current_user.id) & (Message.receiver_id == user_id)) |
         ((Message.sender_id == user_id) & (Message.receiver_id == current_user.id))
@@ -294,7 +294,7 @@ async def get_messages(
         for msg in messages
     ]
     
-    # Помечаем личные входящие сообщения как прочитанные
+    # помечаем личные входящие сообщения как прочитанные
     unread = db.query(Message).filter(
         Message.sender_id == user_id,
         Message.receiver_id == current_user.id,
@@ -314,10 +314,7 @@ async def get_group_messages(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    История сообщений группы.
-    Возвращает сообщения только если текущий пользователь является участником группы.
-    """
+    #история сообщений в группе
     membership = db.query(GroupMember).filter(
         GroupMember.group_id == group_id,
         GroupMember.user_id == current_user.id
@@ -349,7 +346,7 @@ async def get_group_messages(
     
     return success_response(data=messages_list)
 
-# ==================== ДРУЗЬЯ ====================
+# добавление друзей
 @app.post("/friends/add", response_model=dict)
 async def add_friend(
     friend_data: FriendRequest,
@@ -372,7 +369,7 @@ async def add_friend(
             detail="User not found"
         )
     
-    # Проверяем, нет ли уже запроса
+    # запрос на добавление в друзья
     existing = db.query(Friendship).filter(
         ((Friendship.user_id == current_user.id) & (Friendship.friend_id == friend_id)) |
         ((Friendship.user_id == friend_id) & (Friendship.friend_id == current_user.id))
@@ -384,7 +381,7 @@ async def add_friend(
             detail="Friend request already exists"
         )
     
-    # Создаем запрос
+    # запрос
     friendship = Friendship(
         user_id=current_user.id,
         friend_id=friend_id,
@@ -393,7 +390,7 @@ async def add_friend(
     db.add(friendship)
     db.commit()
     
-    # Уведомляем через WebSocket
+    # уведомление через socket
     if friend_id in user_connections:
         await user_connections[friend_id].send_json({
             "type": "friend_request",
@@ -408,7 +405,7 @@ async def get_friends(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Получить список друзей"""
+    """список друзей"""
     friendships = db.query(Friendship).filter(
         ((Friendship.user_id == current_user.id) | (Friendship.friend_id == current_user.id)) &
         (Friendship.status == 'accepted')
@@ -434,7 +431,7 @@ async def get_friend_requests(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Получить входящие запросы в друзья"""
+    """получение запросов в друзья"""
     requests = db.query(Friendship).filter(
         Friendship.friend_id == current_user.id,
         Friendship.status == 'pending'
@@ -458,7 +455,7 @@ async def accept_friend_request(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Принять запрос в друзья"""
+    """принятие запроса в друзья"""
     friendship = db.query(Friendship).filter(
         Friendship.id == friendship_id,
         Friendship.friend_id == current_user.id,
@@ -474,7 +471,7 @@ async def accept_friend_request(
     friendship.status = 'accepted'
     db.commit()
     
-    # Уведомляем инициатора
+    # уведомление
     if friendship.user_id in user_connections:
         await user_connections[friendship.user_id].send_json({
             "type": "friend_accepted",
@@ -491,7 +488,7 @@ async def remove_friend(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Удалить друга"""
+    """удаление друга"""
     friendship = db.query(Friendship).filter(
         ((Friendship.user_id == current_user.id) & (Friendship.friend_id == friend_id)) |
         ((Friendship.user_id == friend_id) & (Friendship.friend_id == current_user.id))
@@ -508,13 +505,13 @@ async def remove_friend(
     
     return success_response(message="Friend removed")
 
-# ==================== ГРУППЫ ====================
+# группы
 @app.get("/groups", response_model=dict)
 async def get_user_groups(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Получить список групп пользователя"""
+    """список групп"""
     memberships = db.query(GroupMember).filter(
         GroupMember.user_id == current_user.id
     ).all()
@@ -544,18 +541,18 @@ async def create_group(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Создать группу с участниками"""
+    """создать группу с участниками"""
     new_group = Group(name=group.name, creator_id=current_user.id)
     db.add(new_group)
     db.commit()
     db.refresh(new_group)
     
-    # Добавляем создателя как админа
+    # создатель админ
     member = GroupMember(user_id=current_user.id, group_id=new_group.id, is_admin=True)
     db.add(member)
     db.commit()
     
-    # Добавляем участников по логинам
+    # добавление пользователей
     if group.members:
         for username in group.members:
             user = db.query(User).filter(User.username == username).first()
@@ -563,7 +560,7 @@ async def create_group(
                 new_member = GroupMember(user_id=user.id, group_id=new_group.id, is_admin=False)
                 db.add(new_member)
                 
-                # Уведомляем участника
+                # уведомление группа
                 if user.id in user_connections:
                     await user_connections[user.id].send_json({
                         "type": "group_invite",
@@ -585,7 +582,7 @@ async def get_group_info(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Получить информацию о группе"""
+    """инфа о группе"""
     membership = db.query(GroupMember).filter(
         GroupMember.group_id == group_id,
         GroupMember.user_id == current_user.id
@@ -706,7 +703,7 @@ async def add_group_member(
     db.add(new_member)
     db.commit()
     
-    # Уведомляем через WebSocket
+    # уведомление через socket
     if user.id in user_connections:
         group = db.query(Group).filter(Group.id == group_id).first()
         await user_connections[user.id].send_json({

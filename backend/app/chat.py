@@ -3,6 +3,7 @@ from .models import Message, OfflineMessage
 import json
 from datetime import datetime
 
+#Отправка сообщения в бд
 async def handle_message(message_data: dict, sender_id: int, db: Session, user_connections: dict):
     receiver_id = message_data["receiver_id"]
     content = message_data["content"]
@@ -35,7 +36,6 @@ async def handle_message(message_data: dict, sender_id: int, db: Session, user_c
         }
         await user_connections[receiver_id].send_json(message_json)
     else:
-        # Store as offline message
         offline_msg = OfflineMessage(
             sender_id=sender_id,
             receiver_id=receiver_id,
@@ -43,13 +43,11 @@ async def handle_message(message_data: dict, sender_id: int, db: Session, user_c
         )
         db.add(offline_msg)
         db.commit()
-        
-        # Mark original message as unread
         new_message.is_read = False
         db.commit()
 
 async def deliver_offline_messages(user_id: int, websocket, db: Session):
-    """Deliver pending offline messages when user comes online"""
+    """Сообщение об отключение от сети"""
     offline_messages = db.query(OfflineMessage).filter(
         OfflineMessage.receiver_id == user_id,
         OfflineMessage.delivered == False
@@ -64,8 +62,6 @@ async def deliver_offline_messages(user_id: int, websocket, db: Session):
             "is_offline": True
         }
         await websocket.send_json(message_data)
-        
-        # Mark as delivered
         msg.delivered = True
         db.commit()
 

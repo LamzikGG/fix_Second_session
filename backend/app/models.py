@@ -23,11 +23,9 @@ class User(Base):
     friendships_received = relationship("Friendship", foreign_keys="Friendship.friend_id", back_populates="friend")
     
     def verify_password(self, password: str) -> bool:
-        """Проверка пароля"""
         return bcrypt.checkpw(password.encode('utf-8'), self.hashed_password.encode('utf-8'))
     
     def set_password(self, password: str):
-        """Установка хешированного пароля"""
         self.hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 class Friendship(Base):

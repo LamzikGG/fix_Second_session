@@ -19,13 +19,6 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """
     Создание JWT токена
-    
-    Args:
-        data: Данные для кодирования в токене
-        expires_delta: Переопределить время жизни токена (по умолчанию ACCESS_TOKEN_EXPIRE_MINUTES)
-        
-    Returns:
-        JWT токен
     """
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -36,15 +29,6 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 def verify_token(token: str = Depends(oauth2_scheme)) -> TokenData:
     """
     Верификация JWT токена
-    
-    Args:
-        token: JWT токен
-        
-    Returns:
-        Данные из токена
-        
-    Raises:
-        HTTPException: Если токен невалиден
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -61,22 +45,9 @@ def verify_token(token: str = Depends(oauth2_scheme)) -> TokenData:
         raise credentials_exception
     return token_data
 
-def get_current_user(
-    token: str = Depends(oauth2_scheme), 
-    db: Session = Depends(get_db)
-) -> User:
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     """
     Получение текущего пользователя из токена
-    
-    Args:
-        token: JWT токен
-        db: Сессия базы данных
-        
-    Returns:
-        Объект пользователя
-        
-    Raises:
-        HTTPException: Если пользователь не найден или токен невалиден
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
