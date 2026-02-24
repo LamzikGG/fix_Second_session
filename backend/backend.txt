@@ -1,0 +1,34 @@
+Авторизация и Пользователи
+POST /register — Регистрация нового пользователя.
+POST /login — Вход пользователя и получение JWT токена.
+GET /users/search — Поиск пользователей по логину.
+GET /users — Получение списка всех активных пользователей.
+Сообщения
+handle_chat_message — Обработка и отправка текстового сообщения через WebSocket.
+GET /messages/{user_id} — Получение истории личной переписки.
+GET /groups/{group_id}/messages — Получение истории сообщений группы.
+Друзья
+POST /friends/add — Отправка запроса в друзья.
+GET /friends — Получение списка друзей.
+GET /friends/requests — Получение входящих заявок в друзья.
+POST /friends/accept — Принятие заявки в друзья.
+DELETE /friends — Удаление друга.
+Группы
+GET /groups — Получение списка групп пользователя.
+POST /groups/create — Создание новой группы.
+GET /groups/{group_id} — Получение информации о группе.
+GET /groups/{group_id}/members — Получение списка участников группы.
+POST /groups/{group_id}/members — Добавление участника в группу.
+DELETE /groups/{group_id}/members — Удаление участника из группы.
+POST /groups/{group_id}/leave — Выход из группы.
+DELETE /groups/{group_id} — Удаление группы.
+Звонки
+handle_call_initiate — Инициация звонка.
+handle_call_response — Ответ на звонок (принять/отклонить).
+handle_ice_candidate — Пересылка технических данных для соединения (WebRTC).
+websocket_endpoint — Главный обработчик WebSocket соединений (маршрутизация всех событий).
+Вспомогательные функции
+get_current_user — Получение данных пользователя из JWT токена.
+create_access_token — Создание JWT токена.
+verify_token — Проверка валидности JWT токена.
+Base.metadata.create_all — Создание всех таблиц в базе данных при старте.
